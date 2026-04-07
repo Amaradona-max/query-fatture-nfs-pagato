@@ -383,16 +383,16 @@ function App() {
 
         <div className="grid grid-cols-1 gap-8">
           <FileProcessingSection
-            title="FT NFS Ricevute"
-            description="Analisi e riepilogo per il file NFS Ricevute."
+            title="FT NFS Pagato"
+            description="Analisi e riepilogo per il file NFS Pagato."
             downloadPrefix="FT_NFS_Ricevute"
             processFile={fileAPI.processFile}
             onFileProcessed={setLastNfsFile}
           />
           <FileProcessingSection
-            title="FT Pisa Ricevute"
-            description="Analisi e riepilogo per il file Pisa Ricevute."
-            downloadPrefix="FT_Pisa_Ricevute"
+            title="FT Pisa Pagato"
+            description="Analisi e riepilogo per il file Pisa Pagato."
+            downloadPrefix="FT_Pisa_Pagato"
             processFile={fileAPI.processFilePisa}
             onFileProcessed={setLastPisaFile}
           />
