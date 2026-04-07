@@ -1,0 +1,21 @@
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Backend runtime artifacts
+backend/uploads/
+backend/outputs/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+
+# Env files
+.env
+.env.*
+!.env.example

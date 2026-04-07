@@ -3,7 +3,17 @@ import { AlertCircle, FileSpreadsheet, RefreshCw } from 'lucide-react'
 import FileUpload from './components/FileUpload'
 import ProgressBar from './components/ProgressBar'
 import Summary from './components/Summary'
+import { MAX_FILE_SIZE_MB } from './config'
 import { fileAPI } from './services/api'
+
+function triggerDirectDownload(downloadUrl, filename) {
+  const link = document.createElement('a')
+  link.href = downloadUrl
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+}
 
 const FileProcessingSection = ({
   title,
@@ -52,18 +62,11 @@ const FileProcessingSection = ({
 
     setDownloading(true)
     try {
-      const blob = await fileAPI.downloadFile(result.file_id)
-      const url = window.URL.createObjectURL(blob)
-      const link = document.createElement('a')
-      link.href = url
       const timestamp = new Date().toISOString().slice(0, 19).replace(/:/g, '-')
-      link.download = `File_Riepilogativo_${downloadPrefix}_${timestamp}.xlsx`
-      document.body.appendChild(link)
-      link.click()
-      document.body.removeChild(link)
-      window.URL.revokeObjectURL(url)
+      const downloadUrl = fileAPI.getDownloadUrl(result.file_id)
+      triggerDirectDownload(downloadUrl, `File_Riepilogativo_${downloadPrefix}_${timestamp}.xlsx`)
     } catch {
-      setError('Errore durante il download del file')
+      setError('Errore durante il download: file non valido o corrotto')
     } finally {
       setDownloading(false)
     }
@@ -184,18 +187,11 @@ const CompareProcessingSection = ({ lastNfsFile, lastPisaFile }) => {
 
     setDownloading(true)
     try {
-      const blob = await fileAPI.downloadFile(result.file_id)
-      const url = window.URL.createObjectURL(blob)
-      const link = document.createElement('a')
-      link.href = url
       const timestamp = new Date().toISOString().slice(0, 19).replace(/:/g, '-')
-      link.download = `Confronto_NFS_FT_${timestamp}.xlsx`
-      document.body.appendChild(link)
-      link.click()
-      document.body.removeChild(link)
-      window.URL.revokeObjectURL(url)
+      const downloadUrl = fileAPI.getDownloadUrl(result.file_id)
+      triggerDirectDownload(downloadUrl, `Confronto_NFS_FT_${timestamp}.xlsx`)
     } catch {
-      setError('Errore durante il download del file')
+      setError('Errore durante il download: file non valido o corrotto')
     } finally {
       setDownloading(false)
     }
@@ -374,24 +370,24 @@ function App() {
         <div className="text-center mb-12">
           <div className="flex items-center justify-center gap-3 mb-4">
             <FileSpreadsheet className="w-12 h-12 text-blue-600" />
-            <h1 className="text-4xl font-bold text-gray-800">1. Query Fatture NFS</h1>
+            <h1 className="text-4xl font-bold text-gray-800">1. Query Fatture NFS Trimestrali</h1>
           </div>
           <p className="text-gray-600">
-            Elaborazione automatica file Excel con filtraggio protocolli e note riepilogative
+            Elaborazione automatica file Excel trimestrali con filtraggio protocolli e note riepilogative
           </p>
         </div>
 
         <div className="grid grid-cols-1 gap-8">
           <FileProcessingSection
-            title="FT NFS Pagato"
-            description="Analisi e riepilogo per il file NFS Pagato."
-            downloadPrefix="FT_NFS_Ricevute"
+            title="FT NFS Pagato (Trimestrale)"
+            description="Analisi e riepilogo per il file trimestrale NFS Pagato."
+            downloadPrefix="FT_NFS_Pagato"
             processFile={fileAPI.processFile}
             onFileProcessed={setLastNfsFile}
           />
           <FileProcessingSection
-            title="FT Pisa Pagato"
-            description="Analisi e riepilogo per il file Pisa Pagato."
+            title="FT Pisa Pagato (Trimestrale)"
+            description="Analisi e riepilogo per il file trimestrale Pisa Pagato."
             downloadPrefix="FT_Pisa_Pagato"
             processFile={fileAPI.processFilePisa}
             onFileProcessed={setLastPisaFile}
@@ -400,7 +396,7 @@ function App() {
         </div>
 
         <div className="mt-8 text-center text-sm text-gray-600">
-          <p>Versione 1.0.0 | Supporto: .xlsx | Max 50MB</p>
+          <p>Versione 1.0.0 | Supporto: .xlsx, .csv | Max {MAX_FILE_SIZE_MB}MB</p>
         </div>
       </div>
     </div>

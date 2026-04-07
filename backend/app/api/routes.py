@@ -79,11 +79,11 @@ async def process_file(file: UploadFile = File(...)):
             shutil.copyfileobj(file.file, buffer)
 
         file_size = upload_path.stat().st_size
-        if file_size > settings.MAX_FILE_SIZE:
+        if file_size > settings.max_file_size_bytes:
             upload_path.unlink()
             raise HTTPException(
                 status_code=400,
-                detail=f"File troppo grande. Dimensione massima: {settings.MAX_FILE_SIZE / 1024 / 1024:.0f}MB",
+                detail=f"File troppo grande. Dimensione massima: {settings.MAX_FILE_SIZE_MB}MB",
             )
 
         tasks[task_id] = {"status": "queued", "file_id": task_id}
@@ -125,11 +125,11 @@ async def process_file_pisa(file: UploadFile = File(...)):
             shutil.copyfileobj(file.file, buffer)
 
         file_size = upload_path.stat().st_size
-        if file_size > settings.MAX_FILE_SIZE:
+        if file_size > settings.max_file_size_bytes:
             upload_path.unlink()
             raise HTTPException(
                 status_code=400,
-                detail=f"File troppo grande. Dimensione massima: {settings.MAX_FILE_SIZE / 1024 / 1024:.0f}MB",
+                detail=f"File troppo grande. Dimensione massima: {settings.MAX_FILE_SIZE_MB}MB",
             )
 
         tasks[task_id] = {"status": "queued", "file_id": task_id}
@@ -176,14 +176,14 @@ async def process_compare(file_nfs: UploadFile = File(...), file_pisa: UploadFil
 
         file_size_nfs = upload_path_nfs.stat().st_size
         file_size_pisa = upload_path_pisa.stat().st_size
-        if file_size_nfs > settings.MAX_FILE_SIZE or file_size_pisa > settings.MAX_FILE_SIZE:
+        if file_size_nfs > settings.max_file_size_bytes or file_size_pisa > settings.max_file_size_bytes:
             if upload_path_nfs.exists():
                 upload_path_nfs.unlink()
             if upload_path_pisa.exists():
                 upload_path_pisa.unlink()
             raise HTTPException(
                 status_code=400,
-                detail=f"File troppo grande. Dimensione massima: {settings.MAX_FILE_SIZE / 1024 / 1024:.0f}MB",
+                detail=f"File troppo grande. Dimensione massima: {settings.MAX_FILE_SIZE_MB}MB",
             )
 
         tasks[task_id] = {"status": "queued", "file_id": task_id}

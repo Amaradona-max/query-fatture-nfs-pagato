@@ -133,6 +133,8 @@ export const fileAPI = {
     }
   },
 
+  getDownloadUrl: (fileId) => `${API_BASE_URL}/api/download/${fileId}`,
+
   healthCheck: async () => {
     const response = await api.get('/api/health')
     return response.data

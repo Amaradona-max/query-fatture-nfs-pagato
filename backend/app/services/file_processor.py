@@ -95,6 +95,22 @@ class NFSFTFileProcessor:
     def __init__(self) -> None:
         self.all_protocols = self.PROTOCOLLI_FASE2 + self.PROTOCOLLI_FASE3
 
+    def _read_csv(self, input_path: Path, **kwargs) -> pd.DataFrame:
+        last_error: Optional[Exception] = None
+        for encoding in ("utf-8-sig", "latin-1"):
+            try:
+                return pd.read_csv(input_path, sep=None, engine="python", encoding=encoding, **kwargs)
+            except Exception as exc:
+                last_error = exc
+        if last_error:
+            raise last_error
+        raise ValueError("Impossibile leggere il file CSV")
+
+    def _read_tabular_file(self, input_path: Path, **kwargs) -> pd.DataFrame:
+        if input_path.suffix.lower() == ".csv":
+            return self._read_csv(input_path, **kwargs)
+        return pd.read_excel(input_path, **kwargs)
+
     def validate_file(self, df: pd.DataFrame) -> None:
         def normalize_col_name(value: Any) -> str:
             text = str(value).strip().upper()
@@ -127,6 +143,40 @@ class NFSFTFileProcessor:
                 df[col] = default
 
     def _read_excel_flexible(self, input_path: Path) -> pd.DataFrame:
+        if input_path.suffix.lower() == ".csv":
+            try:
+                df = self._read_csv(input_path)
+                if len(df.columns) > 0:
+                    df.columns = [str(c).strip() for c in df.columns]
+                    has_real_headers = any(col and not col.lower().startswith("unnamed") for col in df.columns)
+                    if has_real_headers:
+                        return df
+            except Exception:
+                pass
+
+            try:
+                raw = self._read_csv(input_path, header=None, nrows=25)
+            except Exception:
+                return self._read_csv(input_path)
+
+            wanted = set(self.REQUIRED_COLUMNS) | set(self.OPTIONAL_COLUMNS_DEFAULTS.keys()) | {"DATA_REG_FATTURA", "FAT_REG_FATTURA"}
+            wanted_upper = {str(x).strip().upper() for x in wanted}
+
+            header_row_idx: Optional[int] = None
+            for idx in range(len(raw)):
+                values = raw.iloc[idx].tolist()
+                normalized = {str(v).strip().upper() for v in values if v is not None and str(v).strip() != ""}
+                if len(normalized & wanted_upper) >= 5:
+                    header_row_idx = idx
+                    break
+
+            if header_row_idx is None:
+                return self._read_csv(input_path)
+
+            df = self._read_csv(input_path, header=header_row_idx)
+            df.columns = [str(c).strip() for c in df.columns]
+            return df
+
         try:
             df = pd.read_excel(input_path)
             if len(df.columns) > 0:
@@ -686,9 +736,9 @@ class PisaRicevuteFTFileProcessor(NFSFTFileProcessor):
         try:
             logger.info("Caricamento file Pisa Ricevute: %s", input_path)
             try:
-                df = pd.read_excel(input_path, usecols=self.INPUT_REQUIRED_COLUMNS, dtype=str)
+                df = self._read_tabular_file(input_path, usecols=self.INPUT_REQUIRED_COLUMNS, dtype=str)
             except ValueError:
-                df_header = pd.read_excel(input_path, nrows=0)
+                df_header = self._read_tabular_file(input_path, nrows=0)
                 missing_columns = [col for col in self.INPUT_REQUIRED_COLUMNS if col not in df_header.columns]
                 if missing_columns:
                     raise ValueError(f"Colonne mancanti: {', '.join(missing_columns)}")
@@ -876,8 +926,24 @@ class CompareFTFileProcessor:
         text = str(value).strip().upper()
         return re.sub(r"[^A-Z0-9]", "", text)
 
+    def _read_csv(self, input_path: Path, **kwargs) -> pd.DataFrame:
+        last_error: Optional[Exception] = None
+        for encoding in ("utf-8-sig", "latin-1"):
+            try:
+                return pd.read_csv(input_path, sep=None, engine="python", encoding=encoding, **kwargs)
+            except Exception as exc:
+                last_error = exc
+        if last_error:
+            raise last_error
+        raise ValueError("Impossibile leggere il file CSV")
+
+    def _read_tabular(self, input_path: Path, **kwargs) -> pd.DataFrame:
+        if input_path.suffix.lower() == ".csv":
+            return self._read_csv(input_path, **kwargs)
+        return pd.read_excel(input_path, **kwargs)
+
     def _load_nfs_compare_df(self, nfs_input_path: Path) -> pd.DataFrame:
-        df = pd.read_excel(nfs_input_path)
+        df = self._read_tabular(nfs_input_path)
         df.columns = [str(c).strip() for c in df.columns]
 
         normalized_to_original = {self._normalize_col_name(c): c for c in df.columns}
@@ -955,10 +1021,10 @@ class CompareFTFileProcessor:
 
     def _load_pisa_compare_df(self, pisa_input_path: Path) -> pd.DataFrame:
         try:
-            df_pisa_raw = pd.read_excel(pisa_input_path, usecols=self.PISA_REQUIRED_COLUMNS, dtype=str)
+            df_pisa_raw = self._read_tabular(pisa_input_path, usecols=self.PISA_REQUIRED_COLUMNS, dtype=str)
             return df_pisa_raw[self.PISA_REQUIRED_COLUMNS].copy()
         except ValueError:
-            df_pisa_raw = pd.read_excel(pisa_input_path, dtype=str)
+            df_pisa_raw = self._read_tabular(pisa_input_path, dtype=str)
             rename_map: dict[str, str] = {}
 
             if "Numero fattura" not in df_pisa_raw.columns and "C" in df_pisa_raw.columns:

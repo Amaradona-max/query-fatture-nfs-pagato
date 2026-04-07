@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react'
 import { useDropzone } from 'react-dropzone'
 import { AlertCircle, FileSpreadsheet, Upload } from 'lucide-react'
+import { MAX_FILE_SIZE_BYTES, MAX_FILE_SIZE_MB } from '../config'
 
 const FileUpload = ({ onFileSelect, disabled }) => {
   const [error, setError] = useState(null)
@@ -12,9 +13,9 @@ const FileUpload = ({ onFileSelect, disabled }) => {
       if (rejectedFiles.length > 0) {
         const rejection = rejectedFiles[0]
         if (rejection.errors[0]?.code === 'file-too-large') {
-          setError('File troppo grande. Dimensione massima: 60MB')
+          setError(`File troppo grande. Dimensione massima: ${MAX_FILE_SIZE_MB}MB`)
         } else if (rejection.errors[0]?.code === 'file-invalid-type') {
-          setError('Formato file non valido. Carica un file .xlsx')
+          setError('Formato file non valido. Carica un file .xlsx o .csv')
         } else {
           setError('File non valido')
         }
@@ -32,8 +33,10 @@ const FileUpload = ({ onFileSelect, disabled }) => {
     onDrop,
     accept: {
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'],
+      'text/csv': ['.csv'],
+      'application/csv': ['.csv'],
     },
-    maxSize: 62914560,
+    maxSize: MAX_FILE_SIZE_BYTES,
     maxFiles: 1,
     disabled,
   })
@@ -57,12 +60,14 @@ const FileUpload = ({ onFileSelect, disabled }) => {
             <p className="text-lg font-medium text-gray-700">
               {isDragActive
                 ? 'Rilascia il file qui'
-                : 'Trascina qui il file Excel oppure clicca per selezionarlo'}
+                : 'Trascina qui il file Excel trimestrale oppure clicca per selezionarlo'}
             </p>
             <p className="text-sm text-gray-500">
-              ✓ Formati supportati: .xlsx
+              ✓ Formati supportati: .xlsx, .csv
               <br />
-              ✓ Dimensione massima: 60MB
+              ✓ Tipologia: file trimestrale
+              <br />
+              ✓ Dimensione massima: {MAX_FILE_SIZE_MB}MB
             </p>
           </div>
         </div>
