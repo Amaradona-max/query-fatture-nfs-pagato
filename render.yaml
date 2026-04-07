@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: nfs-ft-backend
+    runtime: docker
+    rootDir: backend
+    plan: free
+    autoDeploy: true
+    envVars:
+      - key: ALLOWED_ORIGINS
+        value: https://analisi-fatture-nfs-x-revisori.vercel.app,https://frontend-rho-wheat-24.vercel.app
+      - key: MAX_FILE_SIZE
+        value: 62914560
+      - key: FILE_RETENTION_HOURS
+        value: 24
