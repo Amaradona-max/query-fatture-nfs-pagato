@@ -147,18 +147,97 @@ const CompareProcessingSection = ({ lastNfsFile, lastPisaFile }) => {
   const [error, setError] = useState(null)
   const [downloading, setDownloading] = useState(false)
 
+  const extractQuarterKey = (file) => {
+    if (!file?.name) return null
+    const name = file.name.toUpperCase()
+    const match = name.match(/(I{1,3}|IV|[1-4])\s*°?\s*TRIM(?:ESTRE)?\.?\s*[-_ ]*(20\d{2})/)
+    if (!match) return null
+    const quarterRaw = match[1]
+    const quarterMap = { I: 1, II: 2, III: 3, IV: 4 }
+    const quarter = quarterMap[quarterRaw] || Number(quarterRaw)
+    const year = Number(match[2])
+    return `${year}-Q${quarter}`
+  }
+
+  const hasQuarterReference = (file) => Boolean(extractQuarterKey(file))
+
+  const isLikelyNfsCompareFile = (file) => {
+    if (!file?.name) return false
+    const name = file.name.toLowerCase()
+    return name.includes('nfs') && name.includes('pagato') && name.endsWith('.csv')
+  }
+
+  const isLikelyPisaCompareFile = (file) => {
+    if (!file?.name) return false
+    const name = file.name.toLowerCase()
+    return name.includes('pisa') && name.includes('pagato') &&
+      (name.endsWith('.xlsx') || name.endsWith('.xls'))
+  }
+
+  const handleNfsCompareFileSelect = (file) => {
+    setNfsFile(file)
+    setError(null)
+  }
+
+  const handlePisaCompareFileSelect = (file) => {
+    setPisaFile(file)
+    setError(null)
+  }
+
   const handleUseLastFiles = () => {
     if (!lastNfsFile || !lastPisaFile) return
-    setNfsFile(lastNfsFile)
-    setPisaFile(lastPisaFile)
+    const validNfs = isLikelyNfsCompareFile(lastNfsFile)
+    const validPisa = isLikelyPisaCompareFile(lastPisaFile)
+
+    if (validNfs) setNfsFile(lastNfsFile)
+    if (validPisa) setPisaFile(lastPisaFile)
+
+    if (!validNfs || !validPisa) {
+      if (!validNfs) setNfsFile(null)
+      if (!validPisa) setPisaFile(null)
+      const missing = [
+        !validNfs ? 'NFS trimestrale (.csv)' : null,
+        !validPisa ? 'Pisa trimestrale (.xlsx/.xls)' : null,
+      ].filter(Boolean)
+      setError(`Ultimi file parzialmente validi: manca ${missing.join(' e ')}. Seleziona manualmente il file mancante.`)
+      return
+    }
     setError(null)
   }
 
   const handleCompare = async () => {
-    if (!nfsFile || !pisaFile) {
-      setError('Seleziona entrambi i file per il confronto')
+    const effectiveNfsFile = nfsFile
+    const effectivePisaFile = pisaFile
+
+    if (!effectiveNfsFile && !effectivePisaFile) {
+      setError('Seleziona entrambi i file trimestrali per il confronto: NFS (.csv) e Pisa (.xlsx/.xls).')
       return
     }
+    if (!effectiveNfsFile) {
+      setError('Manca il file NFS per il confronto. Seleziona il file NFS Pagato trimestrale (.csv).')
+      return
+    }
+    if (!effectivePisaFile) {
+      setError('Manca il file Pisa per il confronto. Seleziona il file Pisa Pagato trimestrale (.xlsx/.xls).')
+      return
+    }
+    if (!isLikelyNfsCompareFile(effectiveNfsFile)) {
+      setError("File NFS non valido: usa un file CSV trimestrale con nome 'NFS Pagato ... Trim...'.")
+      return
+    }
+    if (!isLikelyPisaCompareFile(effectivePisaFile)) {
+      setError("File Pisa non valido: usa un file Excel trimestrale con nome 'Pisa Pagato ... Trim...'.")
+      return
+    }
+    const nfsQuarterKey = extractQuarterKey(effectiveNfsFile)
+    const pisaQuarterKey = extractQuarterKey(effectivePisaFile)
+    if (nfsQuarterKey && pisaQuarterKey && nfsQuarterKey !== pisaQuarterKey) {
+      setError('Attenzione: i due file sembrano di trimestri diversi dal nome. Procedo comunque, verifica il risultato finale.')
+    }
+
+    // Auto-popola la UI con i file effettivamente usati nel confronto.
+    if (!nfsFile) setNfsFile(effectiveNfsFile)
+    if (!pisaFile) setPisaFile(effectivePisaFile)
 
     setError(null)
     setResult(null)
@@ -167,7 +246,7 @@ const CompareProcessingSection = ({ lastNfsFile, lastPisaFile }) => {
     setStatus('Caricamento file...')
 
     try {
-      const response = await fileAPI.processCompare(nfsFile, pisaFile, (uploadProgress) => {
+      const response = await fileAPI.processCompare(effectiveNfsFile, effectivePisaFile, (uploadProgress) => {
         setProgress(uploadProgress)
         if (uploadProgress === 100) {
           setStatus('Elaborazione in corso...')
@@ -176,7 +255,14 @@ const CompareProcessingSection = ({ lastNfsFile, lastPisaFile }) => {
       setStatus('Completato!')
       setResult(response)
     } catch (err) {
-      setError(err.message)
+      const message = err?.message || 'Errore durante il confronto dei file'
+      if (message.includes('Valuta Importo Mandato')) {
+        setNfsFile(null)
+        setResult(null)
+        setError(`${message} Seleziona un file NFS trimestrale CSV con colonna importo mandato numerica.`)
+      } else {
+        setError(message)
+      }
     } finally {
       setProcessing(false)
     }
@@ -247,7 +333,7 @@ const CompareProcessingSection = ({ lastNfsFile, lastPisaFile }) => {
           )}
           <div className="space-y-2">
             <p className="text-sm font-medium text-gray-700">FT NFS</p>
-            <FileUpload onFileSelect={setNfsFile} disabled={processing} />
+            <FileUpload onFileSelect={handleNfsCompareFileSelect} disabled={processing} />
             {nfsFile && (
               <p className="text-sm text-gray-600">
                 File selezionato: <span className="font-medium">{nfsFile.name}</span>
@@ -256,7 +342,7 @@ const CompareProcessingSection = ({ lastNfsFile, lastPisaFile }) => {
           </div>
           <div className="space-y-2">
             <p className="text-sm font-medium text-gray-700">FT Pisa</p>
-            <FileUpload onFileSelect={setPisaFile} disabled={processing} />
+            <FileUpload onFileSelect={handlePisaCompareFileSelect} disabled={processing} />
             {pisaFile && (
               <p className="text-sm text-gray-600">
                 File selezionato: <span className="font-medium">{pisaFile.name}</span>
@@ -265,7 +351,8 @@ const CompareProcessingSection = ({ lastNfsFile, lastPisaFile }) => {
           </div>
           <button
             onClick={handleCompare}
-            className="w-full md:w-auto px-8 py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg transition-colors duration-200 mx-auto"
+            disabled={processing}
+            className="w-full md:w-auto px-8 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white font-semibold rounded-lg transition-colors duration-200 mx-auto"
           >
             Confronta e genera file
           </button>

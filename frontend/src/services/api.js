@@ -19,6 +19,9 @@ const api = axios.create({
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
 function getErrorMessage(error, fallbackMessage) {
+  if (typeof error?.message === 'string' && error.message.trim()) {
+    return error.message
+  }
   const detail = error?.response?.data?.detail
   if (!detail) return fallbackMessage
   if (typeof detail === 'string') return detail

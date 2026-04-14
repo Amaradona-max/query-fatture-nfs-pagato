@@ -1,6 +1,12 @@
 import { Download, FileCheck, FileText } from 'lucide-react'
 
 const Summary = ({ summary, onDownload, downloading, title }) => {
+  const formatCurrency = (value) =>
+    Number(value || 0).toLocaleString('it-IT', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })
+
   // PROTEZIONE: Se summary è undefined o null, mostra un messaggio di fallback
   if (!summary) {
     return (
@@ -40,6 +46,9 @@ const Summary = ({ summary, onDownload, downloading, title }) => {
           <p className="text-3xl font-bold text-green-600">
             {(summary.fase2_records || 0).toLocaleString('it-IT')}
           </p>
+          <p className="text-sm text-gray-700 mt-2">
+            Valore: <span className="font-medium">{formatCurrency(summary.fase2_amount)}</span>
+          </p>
           <div className="mt-3 space-y-1 text-xs text-gray-600">
             {summary.protocols_fase2 && Object.entries(summary.protocols_fase2).map(([prot, count]) =>
               count > 0 ? (
@@ -56,6 +65,9 @@ const Summary = ({ summary, onDownload, downloading, title }) => {
           <h3 className="font-semibold text-gray-700 mb-2">Fase 3 - Elettroniche</h3>
           <p className="text-3xl font-bold text-purple-600 mb-3">
             {(summary.fase3_records || 0).toLocaleString('it-IT')}
+          </p>
+          <p className="text-sm text-gray-700 mb-3">
+            Valore: <span className="font-medium">{formatCurrency(summary.fase3_amount)}</span>
           </p>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-x-6 gap-y-1 text-xs text-gray-600">
             {summary.protocols_fase3 && Object.entries(summary.protocols_fase3).map(([prot, count]) =>
