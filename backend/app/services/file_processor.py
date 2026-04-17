@@ -84,6 +84,7 @@ class NFSFTFileProcessor:
         "DMA_NUM": "",
         "TMA_TOT": 0.0,
         "IMPORTO_PAGATO": 0.0,
+        "FT_SEGNO": "D",
         "DATA_ESEGUITO_BANCARIO": "",
         "DATA_GEN_MANDATO": "",
         "M2_TMC_DATREG": "",
@@ -146,6 +147,7 @@ class NFSFTFileProcessor:
         alias_map = {
             "RAGIONESOCIALE": "C_NOME",
             "FTPROT": "FAT_PROT",
+            "FTSEGNO": "FT_SEGNO",
             "NPROTOCOLLO": "FAT_NUM",
             "NUMEROMANDATO": "FAT_NUM",
             "NFATTURA": "FAT_NUM",
@@ -376,6 +378,7 @@ class NFSFTFileProcessor:
                 "FAT_NDOC",
                 "FAT_DATREG",
                 "FAT_PROT",
+                "FT_SEGNO",
                 "FAT_NUM",
                 "IMPONIBILE",
                 "FAT_TOTIVA",
@@ -393,6 +396,7 @@ class NFSFTFileProcessor:
                 "N. Fatture",
                 "Data Ricevimento",
                 "Protocollo",
+                "Segno",
                 "N. Protocollo",
                 "Tot. Imponibile",
                 "Imposta",
@@ -409,7 +413,9 @@ class NFSFTFileProcessor:
                 df_finale["Tot. Imponibile"].astype(str).str.replace(".", "", regex=False).str.replace(",", ".", regex=False),
                 errors="coerce",
             ).fillna(0)
-            df_finale["Importo Pagato"] = df_finale["Tot. Imponibile"]
+            segno = df_finale["Segno"].fillna("").astype(str).str.strip().str.upper()
+            multiplier = segno.eq("A").map({True: -1.0, False: 1.0})
+            df_finale["Importo Pagato"] = (df_finale["Tot. Imponibile"] * multiplier).round(2)
 
             df_finale = df_finale.sort_values("Data Ricevimento")
 
@@ -420,6 +426,7 @@ class NFSFTFileProcessor:
                 "N. Fatture",
                 "Data Ricevimento",
                 "Protocollo",
+                "Segno",
                 "N. Protocollo",
                 "Tot. Imponibile",
                 "Importo Pagato",
@@ -1028,6 +1035,7 @@ class CompareFTFileProcessor:
     NFS_REQUIRED_COLUMNS = [
         "C_NOME",
         "FAT_PROT",
+        "FT_SEGNO",
         "FAT_NUM",
         "FAT_NDOC",
         "FAT_DATDOC",
@@ -1041,6 +1049,7 @@ class CompareFTFileProcessor:
     NFS_RENAME_MAP = {
         "C_NOME": "Ragione sociale",
         "FAT_PROT": "Prot.",
+        "FT_SEGNO": "Segno",
         "FAT_NUM": "FAT_NUM",
         "FAT_NDOC": "N.fatture",
         "FAT_DATDOC": "Data Fatture",
@@ -1066,6 +1075,7 @@ class CompareFTFileProcessor:
         "TMA_TOT": 0.0,
         "DATA_GEN_MANDATO": "",
         "IMPORTO_PAGATO": 0.0,
+        "FT_SEGNO": "D",
     }
 
     def _normalize_col_name(self, value: Any) -> str:
@@ -1188,6 +1198,8 @@ class CompareFTFileProcessor:
                 "FTPROTOCOLLO": "FAT_PROT",
                 "FT_PROT": "FAT_PROT",
                 "FATPROT": "FAT_PROT",
+                "FTSEGNO": "FT_SEGNO",
+                "FT_SEGNO": "FT_SEGNO",
                 "NPROTOCOLLO": "FAT_NUM",
                 "NUMEROPROTOCOLLO": "FAT_NUM",
                 "PROTMAND": "FAT_NUM",
@@ -1298,7 +1310,9 @@ class CompareFTFileProcessor:
         df_nfs["Data Fatture"] = self._parse_date_series(df_nfs["Data Fatture"])
         df_nfs["Datat reg."] = self._parse_date_series(df_nfs["Datat reg."])
         df_nfs["Imponibile"] = self._to_number_series_it(df_nfs["Imponibile"]).fillna(0)
-        df_nfs["Importo Pagamento"] = df_nfs["Imponibile"]
+        segno = df_nfs["Segno"].fillna("").astype(str).str.strip().str.upper()
+        multiplier = segno.eq("A").map({True: -1.0, False: 1.0})
+        df_nfs["Importo Pagamento"] = (df_nfs["Imponibile"] * multiplier).round(2)
 
         df_pisa["Data emissione"] = self._parse_date_series(df_pisa["Data emissione"])
         df_pisa["Importo fattura"] = self._to_number_series(df_pisa["Importo fattura"]).fillna(0)
