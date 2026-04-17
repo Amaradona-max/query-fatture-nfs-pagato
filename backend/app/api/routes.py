@@ -133,7 +133,7 @@ async def process_file_pisa(file: UploadFile = File(...)):
             )
 
         tasks[task_id] = {"status": "queued", "file_id": task_id}
-        executor.submit(_run_single_file_task, task_id, PisaRicevuteFTFileProcessor(), upload_path, output_path)
+        executor.submit(_run_single_file_task, task_id, PisaFTFileProcessor(), upload_path, output_path)
 
         return {
             "success": True,
