@@ -461,8 +461,6 @@ function App() {
   const isValidNfsPagatoFile = (file) => {
     if (!file?.name) return false
     const name = file.name.toLowerCase()
-    if (!name.includes('nfs')) return false
-    if (!name.includes('pagato')) return false
     if (name.includes('ricevut')) return false
     return name.endsWith('.csv') || name.endsWith('.xlsx') || name.endsWith('.xls')
   }
@@ -470,8 +468,6 @@ function App() {
   const isValidPisaPagatoFile = (file) => {
     if (!file?.name) return false
     const name = file.name.toLowerCase()
-    if (!name.includes('pisa')) return false
-    if (!name.includes('pagato')) return false
     if (name.includes('ricevut')) return false
     return name.endsWith('.xlsx') || name.endsWith('.xls')
   }
