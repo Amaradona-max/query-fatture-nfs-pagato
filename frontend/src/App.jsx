@@ -21,6 +21,8 @@ const FileProcessingSection = ({
   downloadPrefix,
   processFile,
   onFileProcessed,
+  isValidFile,
+  invalidFileMessage,
 }) => {
   const [file, setFile] = useState(null)
   const [processing, setProcessing] = useState(false)
@@ -31,6 +33,15 @@ const FileProcessingSection = ({
   const [downloading, setDownloading] = useState(false)
 
   const handleFileSelect = async (selectedFile) => {
+    if (isValidFile && !isValidFile(selectedFile)) {
+      setError(invalidFileMessage || 'File non valido per questa sezione.')
+      setFile(null)
+      setResult(null)
+      setProcessing(false)
+      setProgress(0)
+      setStatus('')
+      return
+    }
     setFile(selectedFile)
     setError(null)
     setResult(null)
@@ -447,6 +458,24 @@ function App() {
   const [lastNfsFile, setLastNfsFile] = useState(null)
   const [lastPisaFile, setLastPisaFile] = useState(null)
 
+  const isValidNfsPagatoFile = (file) => {
+    if (!file?.name) return false
+    const name = file.name.toLowerCase()
+    if (!name.includes('nfs')) return false
+    if (!name.includes('pagato')) return false
+    if (name.includes('ricevut')) return false
+    return name.endsWith('.csv') || name.endsWith('.xlsx') || name.endsWith('.xls')
+  }
+
+  const isValidPisaPagatoFile = (file) => {
+    if (!file?.name) return false
+    const name = file.name.toLowerCase()
+    if (!name.includes('pisa')) return false
+    if (!name.includes('pagato')) return false
+    if (name.includes('ricevut')) return false
+    return name.endsWith('.xlsx') || name.endsWith('.xls')
+  }
+
   useEffect(() => {
     fileAPI.healthCheck().catch(() => {})
   }, [])
@@ -471,6 +500,8 @@ function App() {
             downloadPrefix="FT_NFS_Pagato"
             processFile={fileAPI.processFile}
             onFileProcessed={setLastNfsFile}
+            isValidFile={isValidNfsPagatoFile}
+            invalidFileMessage="File NFS non valido: carica un file trimestrale NFS Pagato (.csv/.xlsx) e non un file Ricevute."
           />
           <FileProcessingSection
             title="FT Pisa Pagato (Trimestrale)"
@@ -478,6 +509,8 @@ function App() {
             downloadPrefix="FT_Pisa_Pagato"
             processFile={fileAPI.processFilePisa}
             onFileProcessed={setLastPisaFile}
+            isValidFile={isValidPisaPagatoFile}
+            invalidFileMessage="File Pisa non valido: carica un file trimestrale Pisa Pagato (.xlsx/.xls) e non un file Ricevute."
           />
           <CompareProcessingSection lastNfsFile={lastNfsFile} lastPisaFile={lastPisaFile} />
         </div>
