@@ -673,68 +673,28 @@ class PisaFTFileProcessor(NFSFTFileProcessor):
     def process_file(self, input_path: Path, output_path: Path) -> Dict[str, Any]:
         try:
             logger.info("Caricamento file Pisa Pagato: %s", input_path)
-            df = pd.read_excel(input_path, dtype=str)
+            df = pd.read_excel(input_path, sheet_name="Sheet1", dtype=str)
             df.columns = [str(c).strip() for c in df.columns]
 
-            def pick_column(*names: str) -> Optional[str]:
-                lower_map = {str(c).strip().lower(): c for c in df.columns}
-                for n in names:
-                    key = n.strip().lower()
-                    if key in lower_map:
-                        return lower_map[key]
-                return None
-
-            sdi_column = pick_column("Identificativo SDI")
-            creditore_col = pick_column("Creditore")
-            numero_fattura_col = pick_column("Numero fattura")
-            data_emissione_col = pick_column("Data emissione")
-            data_pagamento_col = pick_column("Data pagamento")
-
-            amount_col = (
-                pick_column("Importo pagato")
-                or pick_column("Importo liquidato")
-                or pick_column("Importo fattura")
-            )
-
-            missing = [label for label, col in [
-                ("Identificativo SDI", sdi_column),
-                ("Creditore", creditore_col),
-                ("Numero fattura", numero_fattura_col),
-                ("Data emissione", data_emissione_col),
-                ("Data pagamento", data_pagamento_col),
-                ("Importo pagato/liquidato/fattura", amount_col),
-            ] if col is None]
+            required = ["Creditore", "Numero fattura", "Identificativo SDI", "Data emissione", "Importo fattura"]
+            missing = [c for c in required if c not in df.columns]
             if missing:
                 raise ValueError(f"Colonne mancanti nel file Pisa: {', '.join(missing)}")
 
-            pagamento_series = df[data_pagamento_col]
-            pagamento_mask = ~(pagamento_series.isna() | (pagamento_series.astype(str).str.strip() == ""))
-            df_pagato = df[pagamento_mask].copy()
-
-            df_pagato = self._filter_by_file_quarter(df_pagato, data_pagamento_col, input_path)
-
-            df_finale = pd.DataFrame(
-                {
-                    "Creditore": df_pagato[creditore_col],
-                    "Numero fattura": df_pagato[numero_fattura_col],
-                    "Data emissione": df_pagato[data_emissione_col],
-                    "Data pagamento": df_pagato[data_pagamento_col],
-                    "Importo pagato": df_pagato[amount_col],
-                    "Identificativo SDI": df_pagato[sdi_column],
-                }
-            )
+            df_finale = df[required].copy()
 
             cartacee_df, elettroniche_df = self._split_by_sdi(df_finale, "Identificativo SDI")
+
             df_dati = df_finale.copy()
             if len(df_dati) > self.MAX_DETAIL_ROWS:
                 df_dati = df_dati.head(self.MAX_DETAIL_ROWS).copy()
             self._create_excel_output(df_finale, cartacee_df, elettroniche_df, output_path, display_df=df_dati)
             fase2_amount = round(
-                float(self._to_number_series_pisa(cartacee_df["Importo pagato"]).sum()),
+                float(self._to_number_series_pisa(cartacee_df["Importo fattura"]).sum()),
                 2,
             )
             fase3_amount = round(
-                float(self._to_number_series_pisa(elettroniche_df["Importo pagato"]).sum()),
+                float(self._to_number_series_pisa(elettroniche_df["Importo fattura"]).sum()),
                 2,
             )
             stats = {
@@ -829,14 +789,14 @@ class PisaFTFileProcessor(NFSFTFileProcessor):
         total_font: Font,
     ) -> None:
         ws["A1"] = "NUMERO TOTALE"
-        ws["B1"] = "IMPORTO PAGATO"
+        ws["B1"] = "IMPORTO"
 
         for cell in ws[1]:
             cell.fill = header_fill
             cell.font = header_font
             cell.alignment = Alignment(horizontal="center", vertical="center")
 
-        amount_col = "Importo pagato" if "Importo pagato" in df.columns else "Imponibile"
+        amount_col = "Importo fattura" if "Importo fattura" in df.columns else "Imponibile"
         imponibile_totale = float(self._to_number_series_pisa(df[amount_col]).sum())
         ws["A2"] = len(df)
         ws["B2"] = imponibile_totale
@@ -1043,6 +1003,7 @@ class CompareFTFileProcessor:
         "M2_TMC_DATREG",
         "FAT_TOTIVA",
         "IMPONIBILE",
+        "FAT_TOTFAT",
         "RA_CODTRIB",
         "TMC_G8",
     ]
@@ -1057,6 +1018,7 @@ class CompareFTFileProcessor:
         "M2_TMC_DATREG": "Valuta Importo Mandato",
         "FAT_TOTIVA": "Iva",
         "IMPONIBILE": "Imponibile",
+        "FAT_TOTFAT": "Tot. imp. fatture",
         "RA_CODTRIB": "Codice tributo",
         "TMC_G8": "Identificativo SDI",
     }
@@ -1076,6 +1038,7 @@ class CompareFTFileProcessor:
         "DATA_GEN_MANDATO": "",
         "IMPORTO_PAGATO": 0.0,
         "FT_SEGNO": "D",
+        "FAT_TOTFAT": 0.0,
     }
 
     def _normalize_col_name(self, value: Any) -> str:
@@ -1279,9 +1242,6 @@ class CompareFTFileProcessor:
         if rename_map:
             df_pisa_raw = df_pisa_raw.rename(columns=rename_map)
 
-        if "Importo pagato" in df_pisa_raw.columns:
-            df_pisa_raw["Importo fattura"] = df_pisa_raw["Importo pagato"]
-
         missing_pisa = [col for col in self.PISA_REQUIRED_COLUMNS if col not in df_pisa_raw.columns]
         if missing_pisa:
             raise ValueError(f"Colonne mancanti nel file Pisa: {', '.join(missing_pisa)}")
@@ -1310,9 +1270,12 @@ class CompareFTFileProcessor:
         df_nfs["Data Fatture"] = self._parse_date_series(df_nfs["Data Fatture"])
         df_nfs["Datat reg."] = self._parse_date_series(df_nfs["Datat reg."])
         df_nfs["Imponibile"] = self._to_number_series_it(df_nfs["Imponibile"]).fillna(0)
+        df_nfs["Iva"] = self._to_number_series_it(df_nfs["Iva"]).fillna(0)
+        df_nfs["Tot. imp. fatture"] = self._to_number_series_it(df_nfs["Tot. imp. fatture"]).fillna(0)
         segno = df_nfs["Segno"].fillna("").astype(str).str.strip().str.upper()
         multiplier = segno.eq("A").map({True: -1.0, False: 1.0})
-        df_nfs["Importo Pagamento"] = (df_nfs["Imponibile"] * multiplier).round(2)
+        base_amount = df_nfs["Tot. imp. fatture"].where(df_nfs["Tot. imp. fatture"].ne(0), df_nfs["Imponibile"] + df_nfs["Iva"])
+        df_nfs["Importo Pagamento"] = (base_amount * multiplier).round(2)
 
         df_pisa["Data emissione"] = self._parse_date_series(df_pisa["Data emissione"])
         df_pisa["Importo fattura"] = self._to_number_series(df_pisa["Importo fattura"]).fillna(0)
@@ -1344,12 +1307,12 @@ class CompareFTFileProcessor:
         summary = {
             "period": period_label,
             "nfs": {
-                "cartacee": {"count": nfs_cart_count, "amount": nfs_cart_amount, "amount_column": "IMPONIBILE"},
-                "elettroniche": {"count": nfs_elet_count, "amount": nfs_elet_amount, "amount_column": "IMPONIBILE"},
+                "cartacee": {"count": nfs_cart_count, "amount": nfs_cart_amount, "amount_column": "TOT. IMP. FATTURE"},
+                "elettroniche": {"count": nfs_elet_count, "amount": nfs_elet_amount, "amount_column": "TOT. IMP. FATTURE"},
             },
             "pisa": {
-                "cartacee": {"count": pisa_cart_count, "amount": pisa_cart_amount, "amount_column": "Importo pagato"},
-                "elettroniche": {"count": pisa_elet_count, "amount": pisa_elet_amount, "amount_column": "Importo pagato"},
+                "cartacee": {"count": pisa_cart_count, "amount": pisa_cart_amount, "amount_column": "Importo fattura"},
+                "elettroniche": {"count": pisa_elet_count, "amount": pisa_elet_amount, "amount_column": "Importo fattura"},
             },
         }
         for side in ("nfs", "pisa"):
