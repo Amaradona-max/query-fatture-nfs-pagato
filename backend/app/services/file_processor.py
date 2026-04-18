@@ -681,7 +681,10 @@ class PisaFTFileProcessor(NFSFTFileProcessor):
             if missing:
                 raise ValueError(f"Colonne mancanti nel file Pisa: {', '.join(missing)}")
 
-            df_finale = df[required].copy()
+            optional = [c for c in ("Importo pagato", "Importo liquidato") if c in df.columns]
+            df_finale = df[required + optional].copy()
+
+            amount_column = "Importo pagato" if "Importo pagato" in df_finale.columns else "Importo fattura"
 
             cartacee_df, elettroniche_df = self._split_by_sdi(df_finale, "Identificativo SDI")
 
@@ -690,11 +693,11 @@ class PisaFTFileProcessor(NFSFTFileProcessor):
                 df_dati = df_dati.head(self.MAX_DETAIL_ROWS).copy()
             self._create_excel_output(df_finale, cartacee_df, elettroniche_df, output_path, display_df=df_dati)
             fase2_amount = round(
-                float(self._to_number_series_pisa(cartacee_df["Importo fattura"]).sum()),
+                float(self._to_number_series_pisa(cartacee_df[amount_column]).sum()),
                 2,
             )
             fase3_amount = round(
-                float(self._to_number_series_pisa(elettroniche_df["Importo fattura"]).sum()),
+                float(self._to_number_series_pisa(elettroniche_df[amount_column]).sum()),
                 2,
             )
             stats = {
@@ -796,7 +799,7 @@ class PisaFTFileProcessor(NFSFTFileProcessor):
             cell.font = header_font
             cell.alignment = Alignment(horizontal="center", vertical="center")
 
-        amount_col = "Importo fattura" if "Importo fattura" in df.columns else "Imponibile"
+        amount_col = "Importo pagato" if "Importo pagato" in df.columns else ("Importo fattura" if "Importo fattura" in df.columns else "Imponibile")
         imponibile_totale = float(self._to_number_series_pisa(df[amount_col]).sum())
         ws["A2"] = len(df)
         ws["B2"] = imponibile_totale
