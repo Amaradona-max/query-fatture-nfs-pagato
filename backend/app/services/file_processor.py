@@ -1006,7 +1006,6 @@ class CompareFTFileProcessor:
         "M2_TMC_DATREG",
         "FAT_TOTIVA",
         "IMPONIBILE",
-        "FAT_TOTFAT",
         "RA_CODTRIB",
         "TMC_G8",
     ]
@@ -1021,7 +1020,6 @@ class CompareFTFileProcessor:
         "M2_TMC_DATREG": "Valuta Importo Mandato",
         "FAT_TOTIVA": "Iva",
         "IMPONIBILE": "Imponibile",
-        "FAT_TOTFAT": "Tot. imp. fatture",
         "RA_CODTRIB": "Codice tributo",
         "TMC_G8": "Identificativo SDI",
     }
@@ -1245,6 +1243,9 @@ class CompareFTFileProcessor:
         if rename_map:
             df_pisa_raw = df_pisa_raw.rename(columns=rename_map)
 
+        if "Importo pagato" in df_pisa_raw.columns:
+            df_pisa_raw["Importo fattura"] = df_pisa_raw["Importo pagato"]
+
         missing_pisa = [col for col in self.PISA_REQUIRED_COLUMNS if col not in df_pisa_raw.columns]
         if missing_pisa:
             raise ValueError(f"Colonne mancanti nel file Pisa: {', '.join(missing_pisa)}")
@@ -1273,12 +1274,9 @@ class CompareFTFileProcessor:
         df_nfs["Data Fatture"] = self._parse_date_series(df_nfs["Data Fatture"])
         df_nfs["Datat reg."] = self._parse_date_series(df_nfs["Datat reg."])
         df_nfs["Imponibile"] = self._to_number_series_it(df_nfs["Imponibile"]).fillna(0)
-        df_nfs["Iva"] = self._to_number_series_it(df_nfs["Iva"]).fillna(0)
-        df_nfs["Tot. imp. fatture"] = self._to_number_series_it(df_nfs["Tot. imp. fatture"]).fillna(0)
         segno = df_nfs["Segno"].fillna("").astype(str).str.strip().str.upper()
         multiplier = segno.eq("A").map({True: -1.0, False: 1.0})
-        base_amount = df_nfs["Tot. imp. fatture"].where(df_nfs["Tot. imp. fatture"].ne(0), df_nfs["Imponibile"] + df_nfs["Iva"])
-        df_nfs["Importo Pagamento"] = (base_amount * multiplier).round(2)
+        df_nfs["Importo Pagamento"] = (df_nfs["Imponibile"] * multiplier).round(2)
 
         df_pisa["Data emissione"] = self._parse_date_series(df_pisa["Data emissione"])
         df_pisa["Importo fattura"] = self._to_number_series(df_pisa["Importo fattura"]).fillna(0)
@@ -1310,12 +1308,12 @@ class CompareFTFileProcessor:
         summary = {
             "period": period_label,
             "nfs": {
-                "cartacee": {"count": nfs_cart_count, "amount": nfs_cart_amount, "amount_column": "TOT. IMP. FATTURE"},
-                "elettroniche": {"count": nfs_elet_count, "amount": nfs_elet_amount, "amount_column": "TOT. IMP. FATTURE"},
+                "cartacee": {"count": nfs_cart_count, "amount": nfs_cart_amount, "amount_column": "IMPONIBILE (con segno)"},
+                "elettroniche": {"count": nfs_elet_count, "amount": nfs_elet_amount, "amount_column": "IMPONIBILE (con segno)"},
             },
             "pisa": {
-                "cartacee": {"count": pisa_cart_count, "amount": pisa_cart_amount, "amount_column": "Importo fattura"},
-                "elettroniche": {"count": pisa_elet_count, "amount": pisa_elet_amount, "amount_column": "Importo fattura"},
+                "cartacee": {"count": pisa_cart_count, "amount": pisa_cart_amount, "amount_column": "Importo pagato"},
+                "elettroniche": {"count": pisa_elet_count, "amount": pisa_elet_amount, "amount_column": "Importo pagato"},
             },
         }
         for side in ("nfs", "pisa"):
