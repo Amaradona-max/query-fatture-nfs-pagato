@@ -1388,6 +1388,13 @@ class CompareFTFileProcessor:
             header_fill=header_fill,
             header_font=header_font,
         )
+        self._create_delta_importi_sdi_detail_sheet(
+            wb=wb,
+            df_nfs=df_nfs,
+            df_pisa=df_pisa,
+            header_fill=header_fill,
+            header_font=header_font,
+        )
 
         wb.save(output_path)
         return summary
@@ -1838,6 +1845,108 @@ class CompareFTFileProcessor:
         ws.column_dimensions["E"].width = 10
         ws.column_dimensions["F"].width = 16
         ws.column_dimensions["G"].width = 16
+
+    def _create_delta_importi_sdi_detail_sheet(
+        self,
+        wb: Workbook,
+        df_nfs: pd.DataFrame,
+        df_pisa: pd.DataFrame,
+        header_fill: PatternFill,
+        header_font: Font,
+        top_n: int = 30,
+        max_rows_per_side: int = 20,
+    ) -> None:
+        ws = wb.create_sheet("Dettaglio Delta (SDI)")
+        money_format = "#,##0.00"
+        date_format = "dd/mm/yyyy"
+
+        headers = [
+            "Identificativo SDI",
+            "Sorgente",
+            "Soggetto",
+            "Numero",
+            "Data",
+            "Protocollo",
+            "Segno",
+            "Importo",
+        ]
+        for col_idx, value in enumerate(headers, start=1):
+            cell = ws.cell(row=1, column=col_idx, value=value)
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+
+        nfs_protocol_series = df_nfs["Prot."].astype(str).str.strip().str.upper()
+        nfs_elet_mask = nfs_protocol_series.isin(self.NFS_ELETTRONICHE_PROTOCOLS | self.NFS_AUTOFATTURE_PROTOCOLS)
+        nfs_elet = df_nfs[nfs_elet_mask].copy()
+        nfs_elet = nfs_elet[~self._is_empty_sdi(nfs_elet["_SDI_KEY"])].copy()
+        pisa_elet = df_pisa[~self._is_empty_sdi(df_pisa["_SDI_KEY"])].copy()
+
+        nfs_grp = nfs_elet.groupby("_SDI_KEY", dropna=False)["Importo Pagamento"].sum().rename("nfs_sum")
+        pisa_grp = pisa_elet.groupby("_SDI_KEY", dropna=False)["Importo fattura"].sum().rename("pisa_sum")
+        merged = pd.concat([nfs_grp, pisa_grp], axis=1).fillna(0)
+        merged["delta"] = (merged["nfs_sum"] - merged["pisa_sum"]).round(2)
+        top_sdi = merged.reindex(merged["delta"].abs().sort_values(ascending=False).head(top_n).index).index.tolist()
+
+        by_sdi_nfs = {k: g for k, g in nfs_elet.groupby("_SDI_KEY", dropna=False)}
+        by_sdi_pisa = {k: g for k, g in pisa_elet.groupby("_SDI_KEY", dropna=False)}
+
+        row_idx = 2
+        for sdi in top_sdi:
+            nfs_rows = by_sdi_nfs.get(sdi)
+            pisa_rows = by_sdi_pisa.get(sdi)
+
+            nfs_list = []
+            if nfs_rows is not None and not nfs_rows.empty:
+                nfs_list = [r for _, r in nfs_rows.sort_values(by=["Datat reg.", "N.fatture"], na_position="last").head(max_rows_per_side).iterrows()]
+            pisa_list = []
+            if pisa_rows is not None and not pisa_rows.empty:
+                pisa_list = [r for _, r in pisa_rows.sort_values(by=["Data emissione", "Numero fattura"], na_position="last").head(max_rows_per_side).iterrows()]
+
+            # separator header per SDI
+            ws.cell(row=row_idx, column=1, value=str(sdi))
+            ws.cell(row=row_idx, column=2, value="---")
+            row_idx += 1
+
+            for r in nfs_list:
+                ws.cell(row=row_idx, column=1, value=str(sdi))
+                ws.cell(row=row_idx, column=2, value="NFS")
+                ws.cell(row=row_idx, column=3, value=r.get("Ragione sociale", ""))
+                ws.cell(row=row_idx, column=4, value=r.get("N.fatture", ""))
+                c5 = ws.cell(row=row_idx, column=5, value=r.get("Datat reg.", None))
+                if c5.value is not None:
+                    c5.number_format = date_format
+                ws.cell(row=row_idx, column=6, value=r.get("Prot.", ""))
+                ws.cell(row=row_idx, column=7, value=r.get("Segno", ""))
+                c8 = ws.cell(row=row_idx, column=8, value=float(r.get("Importo Pagamento", 0.0)))
+                c8.number_format = money_format
+                row_idx += 1
+
+            for r in pisa_list:
+                ws.cell(row=row_idx, column=1, value=str(sdi))
+                ws.cell(row=row_idx, column=2, value="Pisa")
+                ws.cell(row=row_idx, column=3, value=r.get("Creditore", ""))
+                ws.cell(row=row_idx, column=4, value=r.get("Numero fattura", ""))
+                c5 = ws.cell(row=row_idx, column=5, value=r.get("Data emissione", None))
+                if c5.value is not None:
+                    c5.number_format = date_format
+                ws.cell(row=row_idx, column=6, value="")
+                ws.cell(row=row_idx, column=7, value="")
+                c8 = ws.cell(row=row_idx, column=8, value=float(r.get("Importo fattura", 0.0)))
+                c8.number_format = money_format
+                row_idx += 1
+
+            row_idx += 1
+
+        ws.freeze_panes = "A2"
+        ws.column_dimensions["A"].width = 22
+        ws.column_dimensions["B"].width = 10
+        ws.column_dimensions["C"].width = 30
+        ws.column_dimensions["D"].width = 18
+        ws.column_dimensions["E"].width = 16
+        ws.column_dimensions["F"].width = 14
+        ws.column_dimensions["G"].width = 10
+        ws.column_dimensions["H"].width = 16
 
     def _create_differenze_elettroniche_sheet(
         self,
