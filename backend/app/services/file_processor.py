@@ -1381,6 +1381,13 @@ class CompareFTFileProcessor:
             header_fill=header_fill,
             header_font=header_font,
         )
+        self._create_delta_importi_sdi_sheet(
+            wb=wb,
+            df_nfs=df_nfs,
+            df_pisa=df_pisa,
+            header_fill=header_fill,
+            header_font=header_font,
+        )
 
         wb.save(output_path)
         return summary
@@ -1717,6 +1724,120 @@ class CompareFTFileProcessor:
         ws.column_dimensions["J"].width = 16
         ws.column_dimensions["K"].width = 18
         ws.column_dimensions["L"].width = 16
+
+    def _create_delta_importi_sdi_sheet(
+        self,
+        wb: Workbook,
+        df_nfs: pd.DataFrame,
+        df_pisa: pd.DataFrame,
+        header_fill: PatternFill,
+        header_font: Font,
+    ) -> None:
+        ws = wb.create_sheet("Analisi Delta (SDI)")
+        money_format = "#,##0.00"
+
+        headers = [
+            "Tipo",
+            "Identificativo SDI",
+            "NFS Righe",
+            "NFS Importo",
+            "Pisa Righe",
+            "Pisa Importo",
+            "Delta Importo",
+        ]
+        for col_idx, value in enumerate(headers, start=1):
+            cell = ws.cell(row=1, column=col_idx, value=value)
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+
+        nfs_protocol_series = df_nfs["Prot."].astype(str).str.strip().str.upper()
+        nfs_elet_mask = nfs_protocol_series.isin(self.NFS_ELETTRONICHE_PROTOCOLS | self.NFS_AUTOFATTURE_PROTOCOLS)
+        nfs_elet = df_nfs[nfs_elet_mask].copy()
+        pisa_elet = df_pisa[~self._is_empty_sdi(df_pisa["_SDI_KEY"])].copy()
+
+        nfs_elet = nfs_elet[~self._is_empty_sdi(nfs_elet["_SDI_KEY"])].copy()
+
+        nfs_grp = (
+            nfs_elet.groupby("_SDI_KEY", dropna=False)
+            .agg(nfs_rows=("Importo Pagamento", "size"), nfs_sum=("Importo Pagamento", "sum"))
+            .reset_index()
+        )
+        pisa_grp = (
+            pisa_elet.groupby("_SDI_KEY", dropna=False)
+            .agg(pisa_rows=("Importo fattura", "size"), pisa_sum=("Importo fattura", "sum"))
+            .reset_index()
+        )
+        merged = nfs_grp.merge(pisa_grp, on="_SDI_KEY", how="outer").fillna(0)
+        merged["nfs_rows"] = pd.to_numeric(merged["nfs_rows"], errors="coerce").fillna(0).astype(int)
+        merged["pisa_rows"] = pd.to_numeric(merged["pisa_rows"], errors="coerce").fillna(0).astype(int)
+        merged["nfs_sum"] = pd.to_numeric(merged["nfs_sum"], errors="coerce").fillna(0.0)
+        merged["pisa_sum"] = pd.to_numeric(merged["pisa_sum"], errors="coerce").fillna(0.0)
+        merged["delta"] = (merged["nfs_sum"] - merged["pisa_sum"]).round(2)
+
+        only_nfs = (merged["nfs_rows"] > 0) & (merged["pisa_rows"] == 0)
+        only_pisa = (merged["pisa_rows"] > 0) & (merged["nfs_rows"] == 0)
+        diff_amount = (merged["nfs_rows"] > 0) & (merged["pisa_rows"] > 0) & (merged["delta"].abs() > 0.01)
+
+        rows_out: list[dict[str, Any]] = []
+        for _, r in merged[only_nfs].iterrows():
+            rows_out.append(
+                {
+                    "Tipo": "Solo NFS",
+                    "SDI": str(r["_SDI_KEY"]),
+                    "nfs_rows": int(r["nfs_rows"]),
+                    "nfs_sum": float(r["nfs_sum"]),
+                    "pisa_rows": int(r["pisa_rows"]),
+                    "pisa_sum": float(r["pisa_sum"]),
+                    "delta": float(r["delta"]),
+                }
+            )
+        for _, r in merged[only_pisa].iterrows():
+            rows_out.append(
+                {
+                    "Tipo": "Solo Pisa",
+                    "SDI": str(r["_SDI_KEY"]),
+                    "nfs_rows": int(r["nfs_rows"]),
+                    "nfs_sum": float(r["nfs_sum"]),
+                    "pisa_rows": int(r["pisa_rows"]),
+                    "pisa_sum": float(r["pisa_sum"]),
+                    "delta": float(r["delta"]),
+                }
+            )
+        for _, r in merged[diff_amount].iterrows():
+            rows_out.append(
+                {
+                    "Tipo": "Importo diverso",
+                    "SDI": str(r["_SDI_KEY"]),
+                    "nfs_rows": int(r["nfs_rows"]),
+                    "nfs_sum": float(r["nfs_sum"]),
+                    "pisa_rows": int(r["pisa_rows"]),
+                    "pisa_sum": float(r["pisa_sum"]),
+                    "delta": float(r["delta"]),
+                }
+            )
+
+        rows_out.sort(key=lambda x: abs(x["delta"]), reverse=True)
+
+        row_idx = 2
+        for item in rows_out:
+            ws.cell(row=row_idx, column=1, value=item["Tipo"])
+            ws.cell(row=row_idx, column=2, value=item["SDI"])
+            ws.cell(row=row_idx, column=3, value=item["nfs_rows"])
+            ws.cell(row=row_idx, column=4, value=item["nfs_sum"]).number_format = money_format
+            ws.cell(row=row_idx, column=5, value=item["pisa_rows"])
+            ws.cell(row=row_idx, column=6, value=item["pisa_sum"]).number_format = money_format
+            ws.cell(row=row_idx, column=7, value=item["delta"]).number_format = money_format
+            row_idx += 1
+
+        ws.freeze_panes = "A2"
+        ws.column_dimensions["A"].width = 16
+        ws.column_dimensions["B"].width = 22
+        ws.column_dimensions["C"].width = 10
+        ws.column_dimensions["D"].width = 16
+        ws.column_dimensions["E"].width = 10
+        ws.column_dimensions["F"].width = 16
+        ws.column_dimensions["G"].width = 16
 
     def _create_differenze_elettroniche_sheet(
         self,
