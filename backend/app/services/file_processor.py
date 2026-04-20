@@ -276,6 +276,15 @@ class NFSFTFileProcessor:
         df.columns = [str(c).strip() for c in df.columns]
         return df
 
+    def _to_number_series_mixed(self, series: pd.Series) -> pd.Series:
+        normalized = series.astype(str).str.replace(" ", "", regex=False).str.strip()
+        has_dot = normalized.str.contains(r"\.", regex=True, na=False)
+        has_comma = normalized.str.contains(",", regex=False, na=False)
+        both_mask = has_dot & has_comma
+        normalized = normalized.where(~both_mask, normalized.str.replace(".", "", regex=False))
+        normalized = normalized.str.replace(",", ".", regex=False)
+        return pd.to_numeric(normalized, errors="coerce").fillna(0)
+
     def _parse_mixed_date_series(self, series: pd.Series) -> pd.Series:
         if pd.api.types.is_datetime64_any_dtype(series):
             return series
@@ -385,6 +394,7 @@ class NFSFTFileProcessor:
                 "RA_CODTRIB",
                 "DMA_NUM",
                 "TMA_TOT",
+                "RA_IMPOSTA",
                 "TMC_G8",
                 "M2_TMC_DATREG",
             ]
@@ -403,31 +413,28 @@ class NFSFTFileProcessor:
                 "Codice Tributo",
                 "N. Mandato",
                 "Tot. Importo Mandato",
+                "Tot. Ritenuta",
                 "Id. SDI",
                 "Valuta Importo Mandato",
             ]
 
             df_finale["Data Fatture"] = pd.to_datetime(df_finale["Data Fatture"], errors="coerce")
             df_finale["Data Ricevimento"] = pd.to_datetime(df_finale["Data Ricevimento"], errors="coerce")
-            df_finale["Tot. Imponibile"] = pd.to_numeric(
-                df_finale["Tot. Imponibile"].astype(str).str.replace(".", "", regex=False).str.replace(",", ".", regex=False),
-                errors="coerce",
-            ).fillna(0)
-            df_finale["Imposta"] = pd.to_numeric(
-                df_finale["Imposta"].astype(str).str.replace(".", "", regex=False).str.replace(",", ".", regex=False),
-                errors="coerce",
-            ).fillna(0)
-            df_finale["Tot. Importo Mandato"] = pd.to_numeric(
-                df_finale["Tot. Importo Mandato"].astype(str).str.replace(".", "", regex=False).str.replace(",", ".", regex=False),
-                errors="coerce",
-            ).fillna(0)
+            df_finale["Tot. Imponibile"] = self._to_number_series_mixed(df_finale["Tot. Imponibile"])
+            df_finale["Imposta"] = self._to_number_series_mixed(df_finale["Imposta"])
+            df_finale["Tot. Importo Mandato"] = self._to_number_series_mixed(df_finale["Tot. Importo Mandato"])
+            df_finale["Tot. Ritenuta"] = self._to_number_series_mixed(df_finale["Tot. Ritenuta"])
             segno = df_finale["Segno"].fillna("").astype(str).str.strip().str.upper()
             multiplier = segno.eq("A").map({True: -1.0, False: 1.0})
             signed_imponibile = (df_finale["Tot. Imponibile"] * multiplier).round(2)
             df_finale["Imposta"] = (df_finale["Imposta"] * multiplier).round(2)
             df_finale["Tot. Importo Mandato"] = (df_finale["Tot. Importo Mandato"] * multiplier).round(2)
-            cod = df_finale["Codice Tributo"].fillna("").astype(str).str.strip().str.upper()
-            df_finale["Importo Pagato"] = signed_imponibile.where(cod.ne("I9"), 0.0)
+            signed_ritenuta = (df_finale["Tot. Ritenuta"] * multiplier).round(2)
+            df_finale["Tot. Ritenuta"] = signed_ritenuta
+            prot = df_finale["Protocollo"].fillna("").astype(str).str.strip().str.upper()
+            imponibile_netto = signed_imponibile.where(~prot.isin(["EL", "2EL", "L"]), signed_imponibile - signed_ritenuta).round(2)
+            df_finale["Tot. Imponibile"] = imponibile_netto
+            df_finale["Importo Pagato"] = imponibile_netto
 
             df_finale = df_finale.sort_values("Data Ricevimento")
 
@@ -446,6 +453,7 @@ class NFSFTFileProcessor:
                 "Codice Tributo",
                 "N. Mandato",
                 "Tot. Importo Mandato",
+                "Tot. Ritenuta",
                 "Id. SDI",
                 "Valuta Importo Mandato",
             ]
@@ -509,7 +517,7 @@ class NFSFTFileProcessor:
             total_fill,
             total_font,
             date_columns=["Data Fatture", "Data Ricevimento", "Valuta Importo Mandato"],
-            money_columns=["Tot. Imponibile", "Importo Pagato", "Imposta", "Tot. Importo Mandato"],
+            money_columns=["Tot. Imponibile", "Importo Pagato", "Imposta", "Tot. Importo Mandato", "Tot. Ritenuta"],
             use_active=True,
         )
 
@@ -1018,6 +1026,7 @@ class CompareFTFileProcessor:
         "M2_TMC_DATREG",
         "FAT_TOTIVA",
         "IMPONIBILE",
+        "RA_IMPOSTA",
         "RA_CODTRIB",
         "TMC_G8",
     ]
@@ -1032,6 +1041,7 @@ class CompareFTFileProcessor:
         "M2_TMC_DATREG": "Valuta Importo Mandato",
         "FAT_TOTIVA": "Iva",
         "IMPONIBILE": "Imponibile",
+        "RA_IMPOSTA": "Tot. Ritenuta",
         "RA_CODTRIB": "Codice tributo",
         "TMC_G8": "Identificativo SDI",
     }
@@ -1196,6 +1206,10 @@ class CompareFTFileProcessor:
                 "TOTIMPONIBILE": "IMPONIBILE",
                 "IMPONIBILE": "IMPONIBILE",
                 "IMP_TOT_FATTURA": "FAT_TOTFAT",
+                "IMPTOTRIT": "RA_IMPOSTA",
+                "IMP_TOT_RIT": "RA_IMPOSTA",
+                "IMPTOTMAND": "TMA_TOT",
+                "IMP_TOT_MAND": "TMA_TOT",
                 "RITCODICETRIBUTO": "RA_CODTRIB",
                 "CODTRIBUTO": "RA_CODTRIB",
                 "COD_TRIBUTO": "RA_CODTRIB",
@@ -1285,12 +1299,16 @@ class CompareFTFileProcessor:
         df_nfs.rename(columns=self.NFS_RENAME_MAP, inplace=True)
         df_nfs["Data Fatture"] = self._parse_date_series(df_nfs["Data Fatture"])
         df_nfs["Datat reg."] = self._parse_date_series(df_nfs["Datat reg."])
-        df_nfs["Imponibile"] = self._to_number_series_it(df_nfs["Imponibile"]).fillna(0)
+        df_nfs["Imponibile"] = self._to_number_series(df_nfs["Imponibile"]).fillna(0)
+        df_nfs["Tot. Ritenuta"] = self._to_number_series(df_nfs["Tot. Ritenuta"]).fillna(0)
         segno = df_nfs["Segno"].fillna("").astype(str).str.strip().str.upper()
         multiplier = segno.eq("A").map({True: -1.0, False: 1.0})
         signed_imponibile = (df_nfs["Imponibile"] * multiplier).round(2)
-        cod = df_nfs["Codice tributo"].fillna("").astype(str).str.strip().str.upper()
-        df_nfs["Importo Pagamento"] = signed_imponibile.where(cod.ne("I9"), 0.0)
+        signed_ritenuta = (df_nfs["Tot. Ritenuta"] * multiplier).round(2)
+        prot = df_nfs["Prot."].fillna("").astype(str).str.strip().str.upper()
+        imponibile_netto = signed_imponibile.where(~prot.isin(["EL", "2EL", "L"]), signed_imponibile - signed_ritenuta).round(2)
+        df_nfs["Imponibile"] = imponibile_netto
+        df_nfs["Importo Pagamento"] = imponibile_netto
 
         df_pisa["Data emissione"] = self._parse_date_series(df_pisa["Data emissione"])
         df_pisa["Importo fattura"] = self._to_number_series(df_pisa["Importo fattura"]).fillna(0)
@@ -1322,8 +1340,8 @@ class CompareFTFileProcessor:
         summary = {
             "period": period_label,
             "nfs": {
-                "cartacee": {"count": nfs_cart_count, "amount": nfs_cart_amount, "amount_column": "IMPONIBILE (con segno) - I9"},
-                "elettroniche": {"count": nfs_elet_count, "amount": nfs_elet_amount, "amount_column": "IMPONIBILE (con segno) - I9"},
+                "cartacee": {"count": nfs_cart_count, "amount": nfs_cart_amount, "amount_column": "IMPONIBILE (con segno) - RIT(EL/2EL/L)"},
+                "elettroniche": {"count": nfs_elet_count, "amount": nfs_elet_amount, "amount_column": "IMPONIBILE (con segno) - RIT(EL/2EL/L)"},
             },
             "pisa": {
                 "cartacee": {"count": pisa_cart_count, "amount": pisa_cart_amount, "amount_column": "Importo pagato"},
