@@ -200,6 +200,11 @@ class NFSFTFileProcessor:
         if "FAT_NDOC" not in df.columns and "FAT_NUM" in df.columns:
             df["FAT_NDOC"] = df["FAT_NUM"]
 
+        for original_col in df.columns:
+            if normalize_col_name(original_col) == "NDOCUMENTO" and original_col != "FAT_NDOC":
+                df["FAT_NDOC"] = df[original_col]
+                break
+
         missing_cols = [col for col in self.REQUIRED_COLUMNS if col not in df.columns]
         if missing_cols:
             raise ValueError(f"Colonne mancanti: {', '.join(missing_cols)}")
@@ -1175,9 +1180,12 @@ class CompareFTFileProcessor:
         df = self._read_tabular(nfs_input_path, dtype=str)
         df.columns = [str(c).strip() for c in df.columns]
 
+        preferred_doc_series: Optional[pd.Series] = None
         rename_map: dict[str, str] = {}
         for col in df.columns:
             norm = self._normalize_col_name(col)
+            if norm == "NDOCUMENTO" and preferred_doc_series is None:
+                preferred_doc_series = df[col].copy()
             mapped = {
                 "RAGIONESOCIALE": "C_NOME",
                 "FTPROT": "FAT_PROT",
@@ -1238,6 +1246,8 @@ class CompareFTFileProcessor:
             df["FAT_NUM"] = df["FAT_NDOC"]
         if "FAT_NDOC" not in df.columns and "FAT_NUM" in df.columns:
             df["FAT_NDOC"] = df["FAT_NUM"]
+        if preferred_doc_series is not None:
+            df["FAT_NDOC"] = preferred_doc_series
 
         for col, default in self.NFS_OPTIONAL_DEFAULTS.items():
             if col not in df.columns:
