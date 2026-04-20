@@ -175,7 +175,8 @@ const CompareProcessingSection = ({ lastNfsFile, lastPisaFile }) => {
   const isLikelyNfsCompareFile = (file) => {
     if (!file?.name) return false
     const name = file.name.toLowerCase()
-    return name.includes('nfs') && name.includes('pagato') && name.endsWith('.csv')
+    const hasValidExt = name.endsWith('.csv') || name.endsWith('.xlsx') || name.endsWith('.xls')
+    return name.includes('nfs') && name.includes('pagato') && hasValidExt
   }
 
   const isLikelyPisaCompareFile = (file) => {
@@ -207,7 +208,7 @@ const CompareProcessingSection = ({ lastNfsFile, lastPisaFile }) => {
       if (!validNfs) setNfsFile(null)
       if (!validPisa) setPisaFile(null)
       const missing = [
-        !validNfs ? 'NFS trimestrale (.csv)' : null,
+        !validNfs ? 'NFS trimestrale (.csv/.xlsx/.xls)' : null,
         !validPisa ? 'Pisa trimestrale (.xlsx/.xls)' : null,
       ].filter(Boolean)
       setError(`Ultimi file parzialmente validi: manca ${missing.join(' e ')}. Seleziona manualmente il file mancante.`)
@@ -221,11 +222,11 @@ const CompareProcessingSection = ({ lastNfsFile, lastPisaFile }) => {
     const effectivePisaFile = pisaFile
 
     if (!effectiveNfsFile && !effectivePisaFile) {
-      setError('Seleziona entrambi i file trimestrali per il confronto: NFS (.csv) e Pisa (.xlsx/.xls).')
+      setError('Seleziona entrambi i file trimestrali per il confronto: NFS (.csv/.xlsx/.xls) e Pisa (.xlsx/.xls).')
       return
     }
     if (!effectiveNfsFile) {
-      setError('Manca il file NFS per il confronto. Seleziona il file NFS Pagato trimestrale (.csv).')
+      setError('Manca il file NFS per il confronto. Seleziona il file NFS Pagato trimestrale (.csv/.xlsx/.xls).')
       return
     }
     if (!effectivePisaFile) {
@@ -233,7 +234,7 @@ const CompareProcessingSection = ({ lastNfsFile, lastPisaFile }) => {
       return
     }
     if (!isLikelyNfsCompareFile(effectiveNfsFile)) {
-      setError("File NFS non valido: usa un file CSV trimestrale con nome 'NFS Pagato ... Trim...'.")
+      setError("File NFS non valido: usa un file trimestrale con nome 'NFS Pagato ... Trim...' (.csv/.xlsx/.xls).")
       return
     }
     if (!isLikelyPisaCompareFile(effectivePisaFile)) {
