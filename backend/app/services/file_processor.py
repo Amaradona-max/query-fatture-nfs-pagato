@@ -377,7 +377,7 @@ class NFSFTFileProcessor:
 
             df["FAT_PROT"] = df["FAT_PROT"].astype(str).str.strip().str.upper()
             totale_iniziale = len(df)
-            df_senza_duplicati = df.drop_duplicates(subset=["FAT_DATDOC", "C_NOME", "TMC_G8"]).copy()
+            df_senza_duplicati = df.drop_duplicates(subset=["FAT_DATDOC", "FAT_NDOC", "C_NOME"]).copy()
             duplicati_rimossi = totale_iniziale - len(df_senza_duplicati)
             df_filtrato = df_senza_duplicati[df_senza_duplicati["FAT_PROT"].isin(self.all_protocols)].copy()
 
@@ -1304,7 +1304,7 @@ class CompareFTFileProcessor:
         # Nuova procedura: teniamo solo protocolli ammessi e deduplica su 3 campi.
         nfs_protocol_raw = df_nfs_raw["FAT_PROT"].astype(str).str.strip().str.upper()
         df_nfs_filtered = df_nfs_raw[nfs_protocol_raw.isin(self.NFS_ALLOWED_PROTOCOLS)].copy()
-        df_nfs_deduped = df_nfs_filtered.drop_duplicates(subset=["FAT_DATDOC", "C_NOME", "TMC_G8"]).copy()
+        df_nfs_deduped = df_nfs_filtered.drop_duplicates(subset=["FAT_DATDOC", "FAT_NDOC", "C_NOME"]).copy()
         df_nfs = df_nfs_deduped[self.NFS_REQUIRED_COLUMNS].copy()
         df_nfs.rename(columns=self.NFS_RENAME_MAP, inplace=True)
         df_nfs["Data Fatture"] = self._parse_date_series(df_nfs["Data Fatture"])
