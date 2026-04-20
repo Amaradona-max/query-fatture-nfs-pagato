@@ -363,7 +363,7 @@ class NFSFTFileProcessor:
 
             df["FAT_PROT"] = df["FAT_PROT"].astype(str).str.strip().str.upper()
             totale_iniziale = len(df)
-            df_senza_duplicati = df.drop_duplicates(subset=["FAT_NDOC", "FAT_DATDOC", "C_NOME"]).copy()
+            df_senza_duplicati = df.drop_duplicates(subset=["FAT_DATDOC", "C_NOME", "TMC_G8"]).copy()
             duplicati_rimossi = totale_iniziale - len(df_senza_duplicati)
             df_filtrato = df_senza_duplicati[df_senza_duplicati["FAT_PROT"].isin(self.all_protocols)].copy()
 
@@ -413,9 +413,21 @@ class NFSFTFileProcessor:
                 df_finale["Tot. Imponibile"].astype(str).str.replace(".", "", regex=False).str.replace(",", ".", regex=False),
                 errors="coerce",
             ).fillna(0)
+            df_finale["Imposta"] = pd.to_numeric(
+                df_finale["Imposta"].astype(str).str.replace(".", "", regex=False).str.replace(",", ".", regex=False),
+                errors="coerce",
+            ).fillna(0)
+            df_finale["Tot. Importo Mandato"] = pd.to_numeric(
+                df_finale["Tot. Importo Mandato"].astype(str).str.replace(".", "", regex=False).str.replace(",", ".", regex=False),
+                errors="coerce",
+            ).fillna(0)
             segno = df_finale["Segno"].fillna("").astype(str).str.strip().str.upper()
             multiplier = segno.eq("A").map({True: -1.0, False: 1.0})
-            df_finale["Importo Pagato"] = (df_finale["Tot. Imponibile"] * multiplier).round(2)
+            signed_imponibile = (df_finale["Tot. Imponibile"] * multiplier).round(2)
+            df_finale["Imposta"] = (df_finale["Imposta"] * multiplier).round(2)
+            df_finale["Tot. Importo Mandato"] = (df_finale["Tot. Importo Mandato"] * multiplier).round(2)
+            cod = df_finale["Codice Tributo"].fillna("").astype(str).str.strip().str.upper()
+            df_finale["Importo Pagato"] = signed_imponibile.where(cod.ne("I9"), 0.0)
 
             df_finale = df_finale.sort_values("Data Ricevimento")
 
@@ -1268,7 +1280,7 @@ class CompareFTFileProcessor:
         # Nuova procedura: teniamo solo protocolli ammessi e deduplica su 3 campi.
         nfs_protocol_raw = df_nfs_raw["FAT_PROT"].astype(str).str.strip().str.upper()
         df_nfs_filtered = df_nfs_raw[nfs_protocol_raw.isin(self.NFS_ALLOWED_PROTOCOLS)].copy()
-        df_nfs_deduped = df_nfs_filtered.drop_duplicates(subset=["FAT_NDOC", "FAT_DATDOC", "C_NOME"]).copy()
+        df_nfs_deduped = df_nfs_filtered.drop_duplicates(subset=["FAT_DATDOC", "C_NOME", "TMC_G8"]).copy()
         df_nfs = df_nfs_deduped[self.NFS_REQUIRED_COLUMNS].copy()
         df_nfs.rename(columns=self.NFS_RENAME_MAP, inplace=True)
         df_nfs["Data Fatture"] = self._parse_date_series(df_nfs["Data Fatture"])
@@ -1276,7 +1288,9 @@ class CompareFTFileProcessor:
         df_nfs["Imponibile"] = self._to_number_series_it(df_nfs["Imponibile"]).fillna(0)
         segno = df_nfs["Segno"].fillna("").astype(str).str.strip().str.upper()
         multiplier = segno.eq("A").map({True: -1.0, False: 1.0})
-        df_nfs["Importo Pagamento"] = (df_nfs["Imponibile"] * multiplier).round(2)
+        signed_imponibile = (df_nfs["Imponibile"] * multiplier).round(2)
+        cod = df_nfs["Codice tributo"].fillna("").astype(str).str.strip().str.upper()
+        df_nfs["Importo Pagamento"] = signed_imponibile.where(cod.ne("I9"), 0.0)
 
         df_pisa["Data emissione"] = self._parse_date_series(df_pisa["Data emissione"])
         df_pisa["Importo fattura"] = self._to_number_series(df_pisa["Importo fattura"]).fillna(0)
@@ -1308,8 +1322,8 @@ class CompareFTFileProcessor:
         summary = {
             "period": period_label,
             "nfs": {
-                "cartacee": {"count": nfs_cart_count, "amount": nfs_cart_amount, "amount_column": "IMPONIBILE (con segno)"},
-                "elettroniche": {"count": nfs_elet_count, "amount": nfs_elet_amount, "amount_column": "IMPONIBILE (con segno)"},
+                "cartacee": {"count": nfs_cart_count, "amount": nfs_cart_amount, "amount_column": "IMPONIBILE (con segno) - I9"},
+                "elettroniche": {"count": nfs_elet_count, "amount": nfs_elet_amount, "amount_column": "IMPONIBILE (con segno) - I9"},
             },
             "pisa": {
                 "cartacee": {"count": pisa_cart_count, "amount": pisa_cart_amount, "amount_column": "Importo pagato"},
