@@ -377,7 +377,7 @@ class NFSFTFileProcessor:
 
             df["FAT_PROT"] = df["FAT_PROT"].astype(str).str.strip().str.upper()
             totale_iniziale = len(df)
-            df_senza_duplicati = df.drop_duplicates(subset=["FAT_DATDOC", "FAT_NDOC", "C_NOME"]).copy()
+            df_senza_duplicati = df.drop_duplicates(subset=["FAT_DATDOC", "FAT_NDOC", "TMC_G8"]).copy()
             duplicati_rimossi = totale_iniziale - len(df_senza_duplicati)
             df_filtrato = df_senza_duplicati[df_senza_duplicati["FAT_PROT"].isin(self.all_protocols)].copy()
 
@@ -699,6 +699,40 @@ class PisaFTFileProcessor(NFSFTFileProcessor):
         try:
             logger.info("Caricamento file Pisa Pagato: %s", input_path)
             df = pd.read_excel(input_path, sheet_name="Sheet1", dtype=str)
+            df.columns = [str(c).strip() for c in df.columns]
+
+            def normalize_col_name(value: Any) -> str:
+                text = str(value).strip().upper()
+                return re.sub(r"[^A-Z0-9]", "", text)
+
+            alias_map = {
+                "RAGIONESOCIALE": "Creditore",
+                "NUMEROFATTURA": "Numero fattura",
+                "DATAEMISSIONE": "Data emissione",
+                "IMPORTOFATTURA": "Importo fattura",
+                "IMPORTOPAGATO": "Importo pagato",
+                "IMPORTOLIQUIDATO": "Importo liquidato",
+                "IDENTIFICATIVOSDI": "Identificativo SDI",
+            }
+
+            rename_by_alias: Dict[str, str] = {}
+            assigned_targets = set(df.columns)
+            for original_col in df.columns:
+                mapped = alias_map.get(normalize_col_name(original_col))
+                if mapped and mapped not in assigned_targets:
+                    rename_by_alias[original_col] = mapped
+                    assigned_targets.add(mapped)
+            if rename_by_alias:
+                df.rename(columns=rename_by_alias, inplace=True)
+
+            if "Numero fattura" not in df.columns and "C" in df.columns:
+                df.rename(columns={"C": "Numero fattura"}, inplace=True)
+            if "Data emissione" not in df.columns:
+                if "F" in df.columns:
+                    df.rename(columns={"F": "Data emissione"}, inplace=True)
+                elif "Data pagamento" in df.columns:
+                    df.rename(columns={"Data pagamento": "Data emissione"}, inplace=True)
+
             df.columns = [str(c).strip() for c in df.columns]
 
             required = ["Creditore", "Numero fattura", "Identificativo SDI", "Data emissione", "Importo fattura"]
@@ -1263,6 +1297,8 @@ class CompareFTFileProcessor:
         df_pisa_raw = self._read_tabular(pisa_input_path, dtype=str)
         rename_map: dict[str, str] = {}
 
+        if "Creditore" not in df_pisa_raw.columns and "Ragione Sociale" in df_pisa_raw.columns:
+            rename_map["Ragione Sociale"] = "Creditore"
         if "Numero fattura" not in df_pisa_raw.columns and "C" in df_pisa_raw.columns:
             rename_map["C"] = "Numero fattura"
         if "Data emissione" not in df_pisa_raw.columns:
@@ -1304,7 +1340,7 @@ class CompareFTFileProcessor:
         # Nuova procedura: teniamo solo protocolli ammessi e deduplica su 3 campi.
         nfs_protocol_raw = df_nfs_raw["FAT_PROT"].astype(str).str.strip().str.upper()
         df_nfs_filtered = df_nfs_raw[nfs_protocol_raw.isin(self.NFS_ALLOWED_PROTOCOLS)].copy()
-        df_nfs_deduped = df_nfs_filtered.drop_duplicates(subset=["FAT_DATDOC", "FAT_NDOC", "C_NOME"]).copy()
+        df_nfs_deduped = df_nfs_filtered.drop_duplicates(subset=["FAT_DATDOC", "FAT_NDOC", "TMC_G8"]).copy()
         df_nfs = df_nfs_deduped[self.NFS_REQUIRED_COLUMNS].copy()
         df_nfs.rename(columns=self.NFS_RENAME_MAP, inplace=True)
         df_nfs["Data Fatture"] = self._parse_date_series(df_nfs["Data Fatture"])
@@ -1381,6 +1417,20 @@ class CompareFTFileProcessor:
             header_font=header_font,
         )
         self._create_fatture_da_verificare_sheet(
+            wb=wb,
+            df_nfs=df_nfs,
+            df_pisa=df_pisa,
+            header_fill=header_fill,
+            header_font=header_font,
+        )
+        self._create_dettaglio_cartacee_sheet(
+            wb=wb,
+            df_nfs=df_nfs,
+            df_pisa=df_pisa,
+            header_fill=header_fill,
+            header_font=header_font,
+        )
+        self._create_dettaglio_elettroniche_sheet(
             wb=wb,
             df_nfs=df_nfs,
             df_pisa=df_pisa,
@@ -1503,13 +1553,104 @@ class CompareFTFileProcessor:
         header_font: Font,
     ) -> None:
         ws = wb.create_sheet("Differenze tra file")
+        total_fill = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
+        total_font = Font(bold=True)
+        money_format = "#,##0.00"
+
+        nfs_protocol_series = df_nfs["Prot."].astype(str).str.strip().str.upper()
+        nfs_cart_mask = nfs_protocol_series.isin(self.NFS_CARTACEE_PROTOCOLS)
+        nfs_elet_mask = nfs_protocol_series.isin(self.NFS_ELETTRONICHE_PROTOCOLS | self.NFS_AUTOFATTURE_PROTOCOLS)
+        pisa_cart_mask = self._is_empty_sdi(df_pisa["_SDI_KEY"])
+
+        rows = [
+            (
+                "Cartacee",
+                int(nfs_cart_mask.sum()),
+                round(float(df_nfs.loc[nfs_cart_mask, "Importo Pagamento"].sum()), 2),
+                int(pisa_cart_mask.sum()),
+                round(float(df_pisa.loc[pisa_cart_mask, "Importo fattura"].sum()), 2),
+            ),
+            (
+                "Elettroniche",
+                int(nfs_elet_mask.sum()),
+                round(float(df_nfs.loc[nfs_elet_mask, "Importo Pagamento"].sum()), 2),
+                int((~pisa_cart_mask).sum()),
+                round(float(df_pisa.loc[~pisa_cart_mask, "Importo fattura"].sum()), 2),
+            ),
+        ]
+
+        headers = [
+            "Categoria",
+            "NFS Numero",
+            "NFS Importo",
+            "Pisa Numero",
+            "Pisa Importo",
+            "Delta Numero",
+            "Delta Importo",
+            "Foglio dettaglio",
+        ]
+        for col_idx, value in enumerate(headers, start=1):
+            cell = ws.cell(row=1, column=col_idx, value=value)
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+
+        for row_idx, (categoria, n_num, n_imp, p_num, p_imp) in enumerate(rows, start=2):
+            ws.cell(row=row_idx, column=1, value=categoria)
+            ws.cell(row=row_idx, column=2, value=n_num)
+            ws.cell(row=row_idx, column=3, value=n_imp).number_format = money_format
+            ws.cell(row=row_idx, column=4, value=p_num)
+            ws.cell(row=row_idx, column=5, value=p_imp).number_format = money_format
+            ws.cell(row=row_idx, column=6, value=n_num - p_num)
+            ws.cell(row=row_idx, column=7, value=round(n_imp - p_imp, 2)).number_format = money_format
+            ws.cell(
+                row=row_idx,
+                column=8,
+                value="Dettaglio Diff. Cartacee" if categoria == "Cartacee" else "Dettaglio Diff. Elettroniche",
+            )
+
+        total_row_idx = len(rows) + 2
+        ws.cell(row=total_row_idx, column=1, value="Totale")
+        ws.cell(row=total_row_idx, column=2, value=sum(row[1] for row in rows))
+        ws.cell(row=total_row_idx, column=3, value=round(sum(row[2] for row in rows), 2)).number_format = money_format
+        ws.cell(row=total_row_idx, column=4, value=sum(row[3] for row in rows))
+        ws.cell(row=total_row_idx, column=5, value=round(sum(row[4] for row in rows), 2)).number_format = money_format
+        ws.cell(row=total_row_idx, column=6, value=sum(row[1] - row[3] for row in rows))
+        ws.cell(row=total_row_idx, column=7, value=round(sum(row[2] - row[4] for row in rows), 2)).number_format = money_format
+        ws.cell(row=total_row_idx, column=8, value="Somma dei due fogli di dettaglio")
+        for cell in ws[total_row_idx]:
+            cell.fill = total_fill
+            cell.font = total_font
+
+        ws.column_dimensions["A"].width = 18
+        ws.column_dimensions["B"].width = 14
+        ws.column_dimensions["C"].width = 16
+        ws.column_dimensions["D"].width = 14
+        ws.column_dimensions["E"].width = 16
+        ws.column_dimensions["F"].width = 14
+        ws.column_dimensions["G"].width = 16
+        ws.column_dimensions["H"].width = 34
+
+    def _create_dettaglio_cartacee_sheet(
+        self,
+        wb: Workbook,
+        df_nfs: pd.DataFrame,
+        df_pisa: pd.DataFrame,
+        header_fill: PatternFill,
+        header_font: Font,
+    ) -> None:
+        ws = wb.create_sheet("Dettaglio Diff. Cartacee")
+        total_fill = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
+        total_font = Font(bold=True)
+        money_format = "#,##0.00"
+        date_format = "dd/mm/yyyy"
 
         headers = [
             "Esito",
-            "Identificativo SDI",
+            "Chiave confronto",
             "NFS Ragione sociale",
             "NFS N.fatture",
-            "NFS Datat reg.",
+            "NFS Data fattura",
             "NFS Prot.",
             "NFS Importo",
             "Pisa Creditore",
@@ -1524,120 +1665,13 @@ class CompareFTFileProcessor:
             cell.font = header_font
             cell.alignment = Alignment(horizontal="center", vertical="center")
 
-        nfs_sdi_empty = self._is_empty_sdi(df_nfs["_SDI_KEY"])
-        pisa_sdi_empty = self._is_empty_sdi(df_pisa["_SDI_KEY"])
-
-        # Differenze elettroniche: confrontiamo SOLO le elettroniche NFS (da protocollo)
-        # contro le elettroniche Pisa (SDI pieno), in modo coerente col foglio "Confronto".
-        nfs_protocol_series = df_nfs["Prot."].astype(str).str.strip().str.upper()
-        nfs_elet_mask = nfs_protocol_series.isin(self.NFS_ELETTRONICHE_PROTOCOLS | self.NFS_AUTOFATTURE_PROTOCOLS)
-        nfs_elet = df_nfs[nfs_elet_mask].copy()
-        nfs_elet_sdi_empty = self._is_empty_sdi(nfs_elet["_SDI_KEY"])
-        nfs_non_empty = nfs_elet[~nfs_elet_sdi_empty].copy()
-
-        pisa_non_empty = df_pisa[~pisa_sdi_empty].copy()
-
-        money_format = "#,##0.00"
-        date_format = "dd/mm/yyyy"
-
-        nfs_non_empty["_SDI_KEY"] = nfs_non_empty["_SDI_KEY"].astype(str).str.strip()
-        pisa_non_empty["_SDI_KEY"] = pisa_non_empty["_SDI_KEY"].astype(str).str.strip()
-
-        from collections import Counter, defaultdict
-
-        nfs_sdi_list = nfs_non_empty["_SDI_KEY"].astype(str).str.strip().tolist()
-        pisa_sdi_list = pisa_non_empty["_SDI_KEY"].astype(str).str.strip().tolist()
-
-        nfs_sdi_counter = Counter([v for v in nfs_sdi_list if v != ""])
-        pisa_sdi_counter = Counter([v for v in pisa_sdi_list if v != ""])
-
-        extra_pisa_sdi = list((pisa_sdi_counter - nfs_sdi_counter).elements())
-        extra_nfs_sdi = list((nfs_sdi_counter - pisa_sdi_counter).elements())
-
-        pisa_by_sdi: dict[str, list[pd.Series]] = defaultdict(list)
-        for _, r in pisa_non_empty.sort_values(by=["Data emissione", "Numero fattura"], na_position="last").iterrows():
-            key = str(r.get("_SDI_KEY", "")).strip()
-            if key:
-                pisa_by_sdi[key].append(r)
-
-        nfs_by_sdi: dict[str, list[pd.Series]] = defaultdict(list)
-        for _, r in nfs_non_empty.sort_values(by=["Datat reg.", "N.fatture"], na_position="last").iterrows():
-            key = str(r.get("_SDI_KEY", "")).strip()
-            if key:
-                nfs_by_sdi[key].append(r)
-
-        row_idx = 2
-
-        pisa_elet_total = int((~pisa_sdi_empty).sum())
-        nfs_elet_total = int(nfs_elet_mask.sum())
-        delta_elet = int(pisa_elet_total - nfs_elet_total)
-        if delta_elet > 0:
-            to_show_pisa = extra_pisa_sdi[:delta_elet]
-            to_show_nfs: list[str] = []
-        elif delta_elet < 0:
-            to_show_pisa = []
-            to_show_nfs = extra_nfs_sdi[: abs(delta_elet)]
-        else:
-            to_show_pisa = []
-            to_show_nfs = []
-
-        for sdi in to_show_pisa:
-            pisa_row = pisa_by_sdi.get(sdi, [])
-            pisa_item = pisa_row.pop(0) if pisa_row else None
-            ws.cell(row=row_idx, column=1, value="Solo Pisa")
-            ws.cell(row=row_idx, column=2, value=sdi)
-            for c in range(3, 8):
-                ws.cell(row=row_idx, column=c, value="")
-            ws.cell(row=row_idx, column=8, value="" if pisa_item is None else pisa_item.get("Creditore", ""))
-            ws.cell(row=row_idx, column=9, value="" if pisa_item is None else pisa_item.get("Numero fattura", ""))
-            c10 = ws.cell(row=row_idx, column=10, value=None if pisa_item is None else pisa_item.get("Data emissione", None))
-            if c10.value is not None:
-                c10.number_format = date_format
-            c11 = ws.cell(row=row_idx, column=11, value=0.0 if pisa_item is None else float(pisa_item.get("Importo fattura", 0.0)))
-            c11.number_format = money_format
-            c12 = ws.cell(row=row_idx, column=12, value=-float(pisa_item.get("Importo fattura", 0.0)) if pisa_item is not None else 0.0)
-            c12.number_format = money_format
-            row_idx += 1
-
-        for sdi in to_show_nfs:
-            nfs_row = nfs_by_sdi.get(sdi, [])
-            nfs_item = nfs_row.pop(0) if nfs_row else None
-            ws.cell(row=row_idx, column=1, value="Solo NFS")
-            ws.cell(row=row_idx, column=2, value=sdi)
-            ws.cell(row=row_idx, column=3, value="" if nfs_item is None else nfs_item.get("Ragione sociale", ""))
-            ws.cell(row=row_idx, column=4, value="" if nfs_item is None else nfs_item.get("N.fatture", ""))
-            c5 = ws.cell(row=row_idx, column=5, value=None if nfs_item is None else nfs_item.get("Datat reg.", None))
-            if c5.value is not None:
-                c5.number_format = date_format
-            ws.cell(row=row_idx, column=6, value="" if nfs_item is None else nfs_item.get("Prot.", ""))
-            c7 = ws.cell(row=row_idx, column=7, value=0.0 if nfs_item is None else float(nfs_item.get("Importo Pagamento", 0.0)))
-            c7.number_format = money_format
-            for c in range(8, 12):
-                ws.cell(row=row_idx, column=c, value="")
-            c12 = ws.cell(row=row_idx, column=12, value=float(nfs_item.get("Importo Pagamento", 0.0)) if nfs_item is not None else 0.0)
-            c12.number_format = money_format
-            row_idx += 1
-
-        # Cartacee: nel riepilogo "Confronto" la differenza cartacee deriva dalla classificazione NFS per protocollo
-        # e Pisa per SDI vuoto. Qui mostriamo SOLO le fatture cartacee che generano differenza (non tutte).
         nfs_cart = df_nfs[df_nfs["Prot."].astype(str).str.strip().str.upper().isin(self.NFS_CARTACEE_PROTOCOLS)].copy()
-        pisa_cart = df_pisa[pisa_sdi_empty].copy()
+        pisa_cart = df_pisa[self._is_empty_sdi(df_pisa["_SDI_KEY"])].copy()
 
         def normalize_text(value: Any) -> str:
             if pd.isna(value):
                 return ""
             return str(value).strip().upper()
-
-        def normalize_date(value: Any) -> str:
-            if value is None or (isinstance(value, float) and pd.isna(value)):
-                return ""
-            try:
-                dt = pd.to_datetime(value, errors="coerce", dayfirst=True)
-            except Exception:
-                dt = pd.NaT
-            if pd.isna(dt):
-                return ""
-            return dt.strftime("%Y-%m-%d")
 
         def normalize_amount(value: Any) -> str:
             try:
@@ -1649,94 +1683,171 @@ class CompareFTFileProcessor:
         def make_cart_key(source: str, row: pd.Series) -> str:
             if source == "nfs":
                 num = normalize_text(row.get("N.fatture", ""))
-                date = normalize_date(row.get("Data Fatture", None))
                 amt = normalize_amount(row.get("Importo Pagamento", 0.0))
-                name = normalize_text(row.get("Ragione sociale", ""))
             else:
                 num = normalize_text(row.get("Numero fattura", ""))
-                date = normalize_date(row.get("Data emissione", None))
                 amt = normalize_amount(row.get("Importo fattura", 0.0))
-                name = normalize_text(row.get("Creditore", ""))
-            return f"{num}|{date}|{amt}|{name}"
+            return f"{num}|{amt}"
 
-        from collections import Counter
+        from collections import Counter, defaultdict
 
-        nfs_cart_keys = [make_cart_key("nfs", r) for _, r in nfs_cart.iterrows()]
-        pisa_cart_keys = [make_cart_key("pisa", r) for _, r in pisa_cart.iterrows()]
-        nfs_counter = Counter(nfs_cart_keys)
-        pisa_counter = Counter(pisa_cart_keys)
-
+        nfs_counter = Counter(make_cart_key("nfs", r) for _, r in nfs_cart.iterrows())
+        pisa_counter = Counter(make_cart_key("pisa", r) for _, r in pisa_cart.iterrows())
         only_nfs_keys = list((nfs_counter - pisa_counter).elements())
         only_pisa_keys = list((pisa_counter - nfs_counter).elements())
 
-        delta_cart = int(len(nfs_cart) - int(pisa_sdi_empty.sum()))
-        if delta_cart > 0:
-            to_show_nfs_keys = only_nfs_keys[:delta_cart]
-            to_show_pisa_keys: list[str] = []
-        elif delta_cart < 0:
-            to_show_nfs_keys = []
-            to_show_pisa_keys = only_pisa_keys[: abs(delta_cart)]
-        else:
-            to_show_nfs_keys = []
-            to_show_pisa_keys = []
+        nfs_by_key: dict[str, list[pd.Series]] = defaultdict(list)
+        for _, row in nfs_cart.sort_values(by=["Data Fatture", "N.fatture"], na_position="last").iterrows():
+            nfs_by_key[make_cart_key("nfs", row)].append(row)
 
-        if to_show_nfs_keys:
-            key_set = set(to_show_nfs_keys)
-            for _, nfs_row in nfs_cart.iterrows():
-                k = make_cart_key("nfs", nfs_row)
-                if k not in key_set:
-                    continue
-                key_set.remove(k)
-                ws.cell(row=row_idx, column=1, value="Solo NFS (Cartacea)")
-                ws.cell(row=row_idx, column=2, value="")
-                ws.cell(row=row_idx, column=3, value=nfs_row.get("Ragione sociale", ""))
-                ws.cell(row=row_idx, column=4, value=nfs_row.get("N.fatture", ""))
-                c5 = ws.cell(row=row_idx, column=5, value=nfs_row.get("Datat reg.", None))
-                if c5.value is not None:
-                    c5.number_format = date_format
-                ws.cell(row=row_idx, column=6, value=nfs_row.get("Prot.", ""))
-                c7 = ws.cell(row=row_idx, column=7, value=float(nfs_row.get("Importo Pagamento", 0.0)))
-                c7.number_format = money_format
-                for c in range(8, 12):
-                    ws.cell(row=row_idx, column=c, value="")
-                c12 = ws.cell(row=row_idx, column=12, value=float(nfs_row.get("Importo Pagamento", 0.0)))
-                c12.number_format = money_format
-                row_idx += 1
+        pisa_by_key: dict[str, list[pd.Series]] = defaultdict(list)
+        for _, row in pisa_cart.sort_values(by=["Data emissione", "Numero fattura"], na_position="last").iterrows():
+            pisa_by_key[make_cart_key("pisa", row)].append(row)
 
-        if to_show_pisa_keys:
-            key_set = set(to_show_pisa_keys)
-            for _, pisa_row in pisa_cart.iterrows():
-                k = make_cart_key("pisa", pisa_row)
-                if k not in key_set:
-                    continue
-                key_set.remove(k)
-                ws.cell(row=row_idx, column=1, value="Solo Pisa (Cartacea)")
-                ws.cell(row=row_idx, column=2, value="")
-                for c in range(3, 8):
-                    ws.cell(row=row_idx, column=c, value="")
-                ws.cell(row=row_idx, column=8, value=pisa_row.get("Creditore", ""))
-                ws.cell(row=row_idx, column=9, value=pisa_row.get("Numero fattura", ""))
-                c10 = ws.cell(row=row_idx, column=10, value=pisa_row.get("Data emissione", None))
-                if c10.value is not None:
-                    c10.number_format = date_format
-                c11 = ws.cell(row=row_idx, column=11, value=float(pisa_row.get("Importo fattura", 0.0)))
-                c11.number_format = money_format
-                c12 = ws.cell(row=row_idx, column=12, value=-float(pisa_row.get("Importo fattura", 0.0)))
-                c12.number_format = money_format
-                row_idx += 1
+        row_idx = 2
+        for key in only_nfs_keys:
+            nfs_row = nfs_by_key[key].pop(0)
+            ws.cell(row=row_idx, column=1, value="Solo NFS")
+            ws.cell(row=row_idx, column=2, value=key)
+            ws.cell(row=row_idx, column=3, value=nfs_row.get("Ragione sociale", ""))
+            ws.cell(row=row_idx, column=4, value=nfs_row.get("N.fatture", ""))
+            c5 = ws.cell(row=row_idx, column=5, value=nfs_row.get("Data Fatture", None))
+            if c5.value is not None:
+                c5.number_format = date_format
+            ws.cell(row=row_idx, column=6, value=nfs_row.get("Prot.", ""))
+            ws.cell(row=row_idx, column=7, value=float(nfs_row.get("Importo Pagamento", 0.0))).number_format = money_format
+            ws.cell(row=row_idx, column=12, value=float(nfs_row.get("Importo Pagamento", 0.0))).number_format = money_format
+            row_idx += 1
 
-        ws.column_dimensions["A"].width = 18
-        ws.column_dimensions["B"].width = 22
-        ws.column_dimensions["C"].width = 26
-        ws.column_dimensions["D"].width = 16
-        ws.column_dimensions["E"].width = 16
-        ws.column_dimensions["F"].width = 12
-        ws.column_dimensions["G"].width = 16
-        ws.column_dimensions["H"].width = 26
-        ws.column_dimensions["I"].width = 16
-        ws.column_dimensions["J"].width = 16
-        ws.column_dimensions["K"].width = 18
-        ws.column_dimensions["L"].width = 16
+        for key in only_pisa_keys:
+            pisa_row = pisa_by_key[key].pop(0)
+            ws.cell(row=row_idx, column=1, value="Solo Pisa")
+            ws.cell(row=row_idx, column=2, value=key)
+            ws.cell(row=row_idx, column=8, value=pisa_row.get("Creditore", ""))
+            ws.cell(row=row_idx, column=9, value=pisa_row.get("Numero fattura", ""))
+            c10 = ws.cell(row=row_idx, column=10, value=pisa_row.get("Data emissione", None))
+            if c10.value is not None:
+                c10.number_format = date_format
+            ws.cell(row=row_idx, column=11, value=float(pisa_row.get("Importo fattura", 0.0))).number_format = money_format
+            ws.cell(row=row_idx, column=12, value=-float(pisa_row.get("Importo fattura", 0.0))).number_format = money_format
+            row_idx += 1
+
+        ws.cell(row=row_idx, column=1, value="TOTALE DELTA CARTACEE")
+        ws.cell(row=row_idx, column=4, value=len(only_nfs_keys))
+        ws.cell(row=row_idx, column=9, value=len(only_pisa_keys))
+        ws.cell(
+            row=row_idx,
+            column=12,
+            value=round(
+                sum(float(v.split("|")[-1]) for v in only_nfs_keys) - sum(float(v.split("|")[-1]) for v in only_pisa_keys),
+                2,
+            ),
+        ).number_format = money_format
+        for cell in ws[row_idx]:
+            cell.fill = total_fill
+            cell.font = total_font
+
+        for col, width in {"A": 16, "B": 20, "C": 28, "D": 16, "E": 16, "F": 12, "G": 16, "H": 28, "I": 18, "J": 16, "K": 18, "L": 16}.items():
+            ws.column_dimensions[col].width = width
+
+    def _create_dettaglio_elettroniche_sheet(
+        self,
+        wb: Workbook,
+        df_nfs: pd.DataFrame,
+        df_pisa: pd.DataFrame,
+        header_fill: PatternFill,
+        header_font: Font,
+    ) -> None:
+        ws = wb.create_sheet("Dettaglio Diff. Elettroniche")
+        total_fill = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
+        total_font = Font(bold=True)
+        money_format = "#,##0.00"
+
+        headers = [
+            "Esito",
+            "Identificativo SDI",
+            "NFS Righe",
+            "NFS Importo",
+            "Pisa Righe",
+            "Pisa Importo",
+            "Delta Numero",
+            "Delta Importo",
+        ]
+        for col_idx, value in enumerate(headers, start=1):
+            cell = ws.cell(row=1, column=col_idx, value=value)
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+
+        nfs_protocol_series = df_nfs["Prot."].astype(str).str.strip().str.upper()
+        nfs_elet = df_nfs[nfs_protocol_series.isin(self.NFS_ELETTRONICHE_PROTOCOLS | self.NFS_AUTOFATTURE_PROTOCOLS)].copy()
+        pisa_elet = df_pisa[~self._is_empty_sdi(df_pisa["_SDI_KEY"])].copy()
+
+        nfs_elet_empty = nfs_elet[self._is_empty_sdi(nfs_elet["_SDI_KEY"])].copy()
+        nfs_elet_non_empty = nfs_elet[~self._is_empty_sdi(nfs_elet["_SDI_KEY"])].copy()
+
+        nfs_grp = (
+            nfs_elet_non_empty.groupby("_SDI_KEY", dropna=False)
+            .agg(nfs_rows=("Importo Pagamento", "size"), nfs_sum=("Importo Pagamento", "sum"))
+            .reset_index()
+        )
+        pisa_grp = (
+            pisa_elet.groupby("_SDI_KEY", dropna=False)
+            .agg(pisa_rows=("Importo fattura", "size"), pisa_sum=("Importo fattura", "sum"))
+            .reset_index()
+        )
+        merged = nfs_grp.merge(pisa_grp, on="_SDI_KEY", how="outer").fillna(0)
+        merged["nfs_rows"] = pd.to_numeric(merged["nfs_rows"], errors="coerce").fillna(0).astype(int)
+        merged["pisa_rows"] = pd.to_numeric(merged["pisa_rows"], errors="coerce").fillna(0).astype(int)
+        merged["nfs_sum"] = pd.to_numeric(merged["nfs_sum"], errors="coerce").fillna(0.0)
+        merged["pisa_sum"] = pd.to_numeric(merged["pisa_sum"], errors="coerce").fillna(0.0)
+        merged["delta_rows"] = merged["nfs_rows"] - merged["pisa_rows"]
+        merged["delta_sum"] = (merged["nfs_sum"] - merged["pisa_sum"]).round(2)
+        merged = merged[(merged["delta_rows"] != 0) | (merged["delta_sum"].abs() > 0.01)].copy()
+        merged = merged.sort_values(by="delta_sum", key=lambda s: s.abs(), ascending=False)
+
+        row_idx = 2
+        for _, row in merged.iterrows():
+            if row["nfs_rows"] > 0 and row["pisa_rows"] == 0:
+                esito = "Solo NFS"
+            elif row["pisa_rows"] > 0 and row["nfs_rows"] == 0:
+                esito = "Solo Pisa"
+            else:
+                esito = "Differenza SDI"
+            ws.cell(row=row_idx, column=1, value=esito)
+            ws.cell(row=row_idx, column=2, value=str(row["_SDI_KEY"]))
+            ws.cell(row=row_idx, column=3, value=int(row["nfs_rows"]))
+            ws.cell(row=row_idx, column=4, value=float(row["nfs_sum"])).number_format = money_format
+            ws.cell(row=row_idx, column=5, value=int(row["pisa_rows"]))
+            ws.cell(row=row_idx, column=6, value=float(row["pisa_sum"])).number_format = money_format
+            ws.cell(row=row_idx, column=7, value=int(row["delta_rows"]))
+            ws.cell(row=row_idx, column=8, value=float(row["delta_sum"])).number_format = money_format
+            row_idx += 1
+
+        nfs_empty_count = int(len(nfs_elet_empty))
+        nfs_empty_amount = round(float(nfs_elet_empty["Importo Pagamento"].sum()), 2)
+        if nfs_empty_count:
+            ws.cell(row=row_idx, column=1, value="Solo NFS (SDI vuoto)")
+            ws.cell(row=row_idx, column=2, value="")
+            ws.cell(row=row_idx, column=3, value=nfs_empty_count)
+            ws.cell(row=row_idx, column=4, value=nfs_empty_amount).number_format = money_format
+            ws.cell(row=row_idx, column=5, value=0)
+            ws.cell(row=row_idx, column=6, value=0.0).number_format = money_format
+            ws.cell(row=row_idx, column=7, value=nfs_empty_count)
+            ws.cell(row=row_idx, column=8, value=nfs_empty_amount).number_format = money_format
+            row_idx += 1
+
+        total_delta_rows = int(merged["delta_rows"].sum()) + nfs_empty_count
+        total_delta_amount = round(float(merged["delta_sum"].sum()) + nfs_empty_amount, 2)
+        ws.cell(row=row_idx, column=1, value="TOTALE DELTA ELETTRONICHE")
+        ws.cell(row=row_idx, column=7, value=total_delta_rows)
+        ws.cell(row=row_idx, column=8, value=total_delta_amount).number_format = money_format
+        for cell in ws[row_idx]:
+            cell.fill = total_fill
+            cell.font = total_font
+
+        for col, width in {"A": 24, "B": 22, "C": 12, "D": 16, "E": 12, "F": 16, "G": 12, "H": 16}.items():
+            ws.column_dimensions[col].width = width
 
     def _create_delta_importi_sdi_sheet(
         self,

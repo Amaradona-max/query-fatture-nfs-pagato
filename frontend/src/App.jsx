@@ -170,8 +170,6 @@ const CompareProcessingSection = ({ lastNfsFile, lastPisaFile }) => {
     return `${year}-Q${quarter}`
   }
 
-  const hasQuarterReference = (file) => Boolean(extractQuarterKey(file))
-
   const isLikelyNfsCompareFile = (file) => {
     if (!file?.name) return false
     const name = file.name.toLowerCase()
